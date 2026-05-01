@@ -1,0 +1,37 @@
+# Deno / package outputs
+deno.lock
+bin/
+dist/
+coverage/
+
+# Generated audio
+*.wav
+*.mp3
+*.ogg
+*.opus
+*.pcm
+*.alaw
+*.mulaw
+
+# Browser automation artifacts
+.agents/
+.claude/
+.playwright-cli/
+playwright-report/
+test-results/
+skills-lock.json
+storage-state*.json
+session*.json
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
