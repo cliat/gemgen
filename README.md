@@ -31,6 +31,8 @@ deno run -A npm:playwright@1.52.0 install chromium
 gemgen tts --text "Hello" --out speech
 gemgen --json tts -t "Hello" -p "Read warmly." -v Achernar -l en-US -e LINEAR16 -o output
 deno x -A jsr:@cliat/gemgen/cli --json tts -t "Hello" -o output
+gemgen tts --json-template > request.json
+gemgen tts --json-template full > full-request.json
 deno run -A cli.ts tts --help
 ```
 
@@ -60,6 +62,7 @@ Granular flags override JSON fields. JSON input overrides defaults.
 | `--turns-file <path>`           | n/a                                       | n/a                                                   | omitted    | JSON array of `{ "speaker": "...", "text": "..." }`.            |
 | `-i, --input-file <path>`       | compact object                            | full request object                                   | omitted    | Reads compact or full JSON.                                     |
 | `--input-json <json>`           | compact object                            | full request object                                   | omitted    | Inline compact or full JSON.                                    |
+| `--json-template [compact       | full]`                                    | n/a                                                   | n/a        | omitted                                                         |
 | `-o, --out <path>`              | `out`                                     | `out`                                                 | required   | Output stem. Creates parent dirs and writes next numbered file. |
 | `--json`                        | n/a                                       | n/a                                                   | false      | Stable JSON success output.                                     |
 
@@ -74,6 +77,10 @@ exists, `-e LINEAR16 --out path/to/file` writes `path/to/file0005.wav`. Known
 audio extensions on `--out` are stripped, so `--out speech.wav` still uses the
 stem `speech`.
 
+`--json-template` prints a compact JSON example. `--json-template full` prints
+the full request-shaped example. Edit the output and pass it back with
+`--input-file`.
+
 ## Examples
 
 ```bash
@@ -82,6 +89,8 @@ gemgen tts -t "The glacier moved a few inches each day." -p "Calm documentary na
 gemgen tts -t "[whispering] The door is open." -p "Whisper a warning." -v Kore -o warning
 gemgen tts -t "[extremely fast] Terms apply. See store for details." -p "Fast disclaimer." -r 1.8 -o disclaimer
 gemgen tts --speaker Sam=Kore --speaker Bob=Charon --turn "Sam:Did you hear that?" --turn "Bob:[laughing] I did." -p "Amused conversation." -o chat
+gemgen tts --json-template > request.json
+gemgen tts -i request.json
 gemgen tts --input-json '{"text":"Hello [short pause] again.","prompt":"Gentle assistant.","audioEncoding":"MP3","out":"hello"}'
 gemgen tts -t "Support is available now." --profile telephony-class-application -e MULAW -o phone
 ```

@@ -7,6 +7,7 @@
 import denoConfig from "./deno.json" with { type: "json" };
 import { synthesizeWithBrowser } from "./lib/browser.ts";
 import {
+  createTtsJsonTemplate,
   parseCompactOrFullJson,
   parseSpeakerMapping,
   parseTurn,
@@ -55,6 +56,7 @@ Options:
   --turns-file <path>               JSON array of { "speaker": "...", "text": "..." }.
   -i, --input-file <path>           Compact or full JSON input.
   --input-json <json>               Compact or full JSON input.
+  --json-template [compact|full]    Print a JSON template/example and exit.
   -o, --out <path>                  Required output stem. Writes <path>0001.<ext>, then next sequence.
   --json                            Emit stable JSON to stdout.
   -h, --help                        Show help.
@@ -72,6 +74,7 @@ type ParsedTtsArgs = {
   jsonOptions?: TtsFlagOverrides;
   flagOptions: TtsFlagOverrides;
   json: boolean;
+  jsonTemplate?: "compact" | "full";
 };
 
 export async function runCli(args: string[] = Deno.args): Promise<void> {
@@ -100,6 +103,13 @@ export async function runCli(args: string[] = Deno.args): Promise<void> {
     }
 
     const ttsArgs = await parseTtsArgs(parsed.commandArgs, parsed.json);
+    if (ttsArgs.jsonTemplate) {
+      console.log(
+        JSON.stringify(createTtsJsonTemplate(ttsArgs.jsonTemplate), null, 2),
+      );
+      return;
+    }
+
     const options = resolveTtsOptions(ttsArgs.jsonOptions, ttsArgs.flagOptions);
     const result = await synthesizeWithBrowser(options, (message) => {
       console.error(message);
@@ -164,6 +174,7 @@ async function parseTtsArgs(
   const speakers = [];
   const turns = [];
   let turnsFile: string | undefined;
+  let jsonTemplate: "compact" | "full" | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -255,6 +266,12 @@ async function parseTtsArgs(
         inputJson = readValue(args, ++index, name, inlineValue);
         if (inlineValue !== undefined) index -= 1;
         break;
+      case "--json-template": {
+        const template = readOptionalTemplateKind(args, index, inlineValue);
+        jsonTemplate = template.kind;
+        index = template.nextIndex;
+        break;
+      }
       case "-o":
       case "--out":
         flagOptions.out = readValue(args, ++index, name, inlineValue);
@@ -282,7 +299,7 @@ async function parseTtsArgs(
     flagOptions.turns = parseTurnsJson(await Deno.readTextFile(turnsFile));
   }
 
-  return { jsonOptions, flagOptions, json };
+  return { jsonOptions, flagOptions, json, jsonTemplate };
 }
 
 function splitInlineValue(arg: string): [string, string | undefined] {
@@ -316,6 +333,27 @@ function readNumber(
     throw new Error(`${name} requires a finite number.`);
   }
   return number;
+}
+
+function readOptionalTemplateKind(
+  args: string[],
+  index: number,
+  inlineValue?: string,
+): { kind: "compact" | "full"; nextIndex: number } {
+  const rawValue = inlineValue ?? args[index + 1];
+  if (rawValue === "compact" || rawValue === "full") {
+    return {
+      kind: rawValue,
+      nextIndex: inlineValue === undefined ? index + 1 : index,
+    };
+  }
+  if (inlineValue !== undefined) {
+    throw new Error("--json-template must be compact or full.");
+  }
+  if (rawValue !== undefined && !rawValue.startsWith("-")) {
+    throw new Error("--json-template must be compact or full.");
+  }
+  return { kind: "compact", nextIndex: index };
 }
 
 if (import.meta.main) {

@@ -1,5 +1,6 @@
 import {
   buildSynthesizeRequest,
+  createTtsJsonTemplate,
   extensionForEncoding,
   GEMINI_TTS_MODEL,
   parseCompactOrFullJson,
@@ -85,6 +86,27 @@ Deno.test("parses full request JSON input", () => {
   assertEquals(options.turns, [{ speaker: "Sam", text: "Hi." }]);
   assertEquals(options.speakers, [{ alias: "Sam", voice: "Kore" }]);
   assertEquals(options.sampleRateHertz, 24000);
+});
+
+Deno.test("creates valid compact JSON template", () => {
+  const template = createTtsJsonTemplate("compact");
+  const options = resolveTtsOptions(
+    parseCompactOrFullJson(JSON.stringify(template)),
+  );
+
+  assertEquals(options.text, "Hello from gemgen.");
+  assertEquals(options.voice, "Achernar");
+  assertEquals(options.out, "speech");
+});
+
+Deno.test("creates valid full JSON template", () => {
+  const template = createTtsJsonTemplate("full");
+  const request = buildSynthesizeRequest(
+    resolveTtsOptions(parseCompactOrFullJson(JSON.stringify(template))),
+  );
+
+  assertEquals(request.voice.modelName, GEMINI_TTS_MODEL);
+  assertEquals(request.audioConfig.audioEncoding, "LINEAR16");
 });
 
 Deno.test("granular flags override JSON fields", () => {

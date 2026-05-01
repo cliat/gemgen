@@ -5,6 +5,7 @@ Run locally:
 ```bash
 deno run -A cli.ts tts --text "Hello" --out speech
 deno run -A cli.ts --json tts -t "Hello" -p "Read warmly." -v Achernar -l en-US -e LINEAR16 -o output
+deno run -A cli.ts tts --json-template > request.json
 ```
 
 Run from JSR:
@@ -46,6 +47,7 @@ JSON input:
 
 ```bash
 gemgen tts --input-json '{"text":"Hello [short pause] again.","prompt":"Gentle assistant.","voice":"Aoede","encoding":"MP3","out":"hello"}'
+gemgen tts --json-template full > full-request.json
 gemgen tts -i request.json -o speech
 ```
 
@@ -69,6 +71,7 @@ deno run -A cli.ts tts --help
 Rules:
 
 - Use `--json` when parsing output.
+- Use `gemgen tts --json-template` to create an editable compact JSON input.
 - `--out path/to/file` writes the next `path/to/fileNNNN.<ext>` and creates the
   parent directory.
 - CAPTCHA instructions appear on stderr; solve them in the visible browser.

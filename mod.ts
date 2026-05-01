@@ -15,6 +15,7 @@ export type { SequencedOutputPath } from "./lib/output.ts";
 export {
   AUDIO_PROFILES,
   buildSynthesizeRequest,
+  createTtsJsonTemplate,
   decodeAudioContent,
   ENCODINGS,
   GEMINI_TTS_MODEL,
@@ -39,6 +40,7 @@ export type {
   ResolvedTtsOptions,
   SpeakerMapping,
   TtsFlagOverrides,
+  TtsJsonTemplateKind,
   TtsOptions,
   TtsRunResult,
   Turn,

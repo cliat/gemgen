@@ -262,6 +262,8 @@ export type CompactJsonInput = Partial<{
 
 export type JsonInput = CompactJsonInput | FullSynthesizeRequest;
 
+export type TtsJsonTemplateKind = "compact" | "full";
+
 export type Logger = (message: string) => void;
 
 export type TtsRunResult = {
@@ -318,6 +320,53 @@ const DEFAULT_OPTIONS: TtsOptions = {
   speakers: [],
   turns: [],
 };
+
+export function createTtsJsonTemplate(
+  kind: TtsJsonTemplateKind = "compact",
+): CompactJsonInput | FullSynthesizeRequest {
+  if (kind === "compact") {
+    return {
+      text: "Hello from gemgen.",
+      prompt: "Read warmly.",
+      voice: "Achernar",
+      language: "en-US",
+      encoding: "LINEAR16",
+      speakingRate: 1,
+      pitch: 0,
+      volumeGainDb: 0,
+      sampleRateHertz: 24000,
+      profiles: ["small-bluetooth-speaker-class-device"],
+      speakers: {},
+      turns: [],
+      out: "speech",
+    };
+  }
+
+  if (kind === "full") {
+    return {
+      input: {
+        text: "Hello from gemgen.",
+        prompt: "Read warmly.",
+      },
+      voice: {
+        languageCode: "en-US",
+        name: "Achernar",
+        modelName: GEMINI_TTS_MODEL,
+      },
+      audioConfig: {
+        audioEncoding: "LINEAR16",
+        speakingRate: 1,
+        pitch: 0,
+        volumeGainDb: 0,
+        sampleRateHertz: 24000,
+        effectsProfileId: ["small-bluetooth-speaker-class-device"],
+      },
+      out: "speech",
+    };
+  }
+
+  throw new Error(`Unknown JSON template kind "${kind}".`);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
