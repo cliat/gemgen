@@ -26,6 +26,7 @@ export {
   mergeTtsOptions,
   parseCompactOrFullJson,
   parseSpeakerMapping,
+  parseTtsJsonInput,
   parseTurn,
   parseTurnsJson,
   resolveTtsOptions,
@@ -34,12 +35,12 @@ export {
 } from "./lib/tts.ts";
 export type {
   AudioEncoding,
-  CompactJsonInput,
   FullSynthesizeRequest,
   JsonInput,
   Logger,
   ResolvedTtsOptions,
   SpeakerMapping,
+  SynthesizeRequest,
   TtsFlagOverrides,
   TtsOptions,
   TtsOutputResult,

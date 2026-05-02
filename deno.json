@@ -1,11 +1,21 @@
 {
   "name": "@cliat/gemgen",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "lock": false,
   "exports": {
     ".": "./mod.ts",
     "./cli": "./cli.ts"
+  },
+  "imports": {
+    "playwright": "npm:playwright@1.52.0"
+  },
+  "lint": {
+    "exclude": [
+      ".agents",
+      ".claude",
+      ".playwright-cli"
+    ]
   },
   "publish": {
     "exclude": [
@@ -19,12 +29,15 @@
       "*.mp3",
       "*.ogg",
       "*.opus",
-      "*.pcm"
+      "*.pcm",
+      "*.alaw",
+      "*.mulaw"
     ]
   },
   "tasks": {
     "run": "deno run -A cli.ts",
     "check": "deno check cli.ts mod.ts tests/tts_test.ts",
+    "lint": "deno lint",
     "test": "deno test -A",
     "publish:dry-run": "deno publish --dry-run --allow-dirty",
     "publish": "deno publish",

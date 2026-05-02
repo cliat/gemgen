@@ -234,34 +234,7 @@ export type FullSynthesizeRequest = {
   };
 };
 
-export type CompactJsonInput = Partial<{
-  text: string;
-  prompt: string;
-  voice: string;
-  language: string;
-  languageCode: string;
-  encoding: string;
-  audioEncoding: string;
-  speakingRate: number;
-  pitch: number;
-  volumeGainDb: number;
-  sampleRate: number;
-  sampleRateHertz: number;
-  profile: string | string[];
-  profiles: string[];
-  effectsProfileId: string[];
-  speaker: string | string[];
-  speakers:
-    | Record<string, string>
-    | string[]
-    | Array<
-      { alias?: string; speaker?: string; voice?: string; speakerId?: string }
-    >;
-  turns: Turn[];
-  out: string;
-}>;
-
-export type JsonInput = CompactJsonInput | FullSynthesizeRequest;
+export type JsonInput = FullSynthesizeRequest;
 
 export type Logger = (message: string) => void;
 
@@ -269,13 +242,6 @@ export type TtsOutputResult = {
   out: string;
   bytes: number;
   index: number;
-  text?: string;
-  voice?: string;
-  language: string;
-  encoding: AudioEncoding;
-  profiles: string[];
-  speakers: SpeakerMapping[];
-  turns: number;
 };
 
 export type TtsRunResult = {
@@ -283,8 +249,6 @@ export type TtsRunResult = {
   command: "tts";
   modelName: typeof GEMINI_TTS_MODEL;
   outputs: TtsOutputResult[];
-  out?: string;
-  bytes?: number;
   voice?: string;
   language: string;
   encoding: AudioEncoding;
@@ -293,7 +257,7 @@ export type TtsRunResult = {
   turns: number;
 };
 
-type SynthesizeRequest = {
+export type SynthesizeRequest = {
   input: {
     text?: string;
     prompt?: string;
@@ -343,7 +307,7 @@ export function createTtsJsonTemplate(): FullSynthesizeRequest {
         "Paste the next narration segment here.",
       ],
       prompt:
-        "Calm, soothing narration. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses.",
+        "Calm, soothing narration ideal for falling asleep videos. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses.",
     },
     voice: {
       languageCode: "en-US",
@@ -458,45 +422,6 @@ function normalizeTurns(value: unknown, field: string): Turn[] | undefined {
   });
 }
 
-function normalizeSpeakerArray(
-  value: unknown,
-  field: string,
-): SpeakerMapping[] | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "string") return [parseSpeakerMapping(value)];
-  if (Array.isArray(value)) {
-    return value.map((item, index) => {
-      if (typeof item === "string") return parseSpeakerMapping(item);
-      if (!isRecord(item)) {
-        throw new Error(`${field}[${index}] must be a string or object.`);
-      }
-      const alias = asString(
-        item.alias ?? item.speaker,
-        `${field}[${index}].alias`,
-      );
-      const voice = asString(
-        item.voice ?? item.speakerId,
-        `${field}[${index}].voice`,
-      );
-      if (!alias || !voice) {
-        throw new Error(
-          `${field}[${index}] must include alias/speaker and voice/speakerId.`,
-        );
-      }
-      return { alias, voice };
-    });
-  }
-  if (isRecord(value)) {
-    return Object.entries(value).map(([alias, voice]) => {
-      if (typeof voice !== "string") {
-        throw new Error(`${field}.${alias} must be a string.`);
-      }
-      return { alias, voice };
-    });
-  }
-  throw new Error(`${field} must be a mapping, string, or array.`);
-}
-
 function mergeArray<T>(
   base: T[] | undefined,
   override: T[] | undefined,
@@ -540,7 +465,7 @@ export function parseTurnsJson(json: string): Turn[] {
   return turns;
 }
 
-export function parseCompactOrFullJson(json: string): TtsFlagOverrides {
+export function parseTtsJsonInput(json: string): TtsFlagOverrides {
   let value: unknown;
   try {
     value = JSON.parse(json);
@@ -558,6 +483,11 @@ export function parseCompactOrFullJson(json: string): TtsFlagOverrides {
     );
   }
   return normalizeFullJson(value);
+}
+
+/** @deprecated Use parseTtsJsonInput. Compact JSON is no longer supported. */
+export function parseCompactOrFullJson(json: string): TtsFlagOverrides {
+  return parseTtsJsonInput(json);
 }
 
 export function isFullSynthesizeRequest(
@@ -728,6 +658,10 @@ export function validateTtsOptions(options: TtsOptions): void {
 
   if (options.texts.length > 0 && options.turns.length > 0) {
     throw new Error("Use either text or structured turns, not both.");
+  }
+
+  if (options.speakers.length > 0 && options.turns.length === 0) {
+    throw new Error("Use --speaker only with structured turns.");
   }
 
   for (const [index, text] of options.texts.entries()) {

@@ -4,8 +4,8 @@ import {
   createTtsJsonTemplate,
   extensionForEncoding,
   GEMINI_TTS_MODEL,
-  parseCompactOrFullJson,
   parseSpeakerMapping,
+  parseTtsJsonInput,
   parseTurn,
   parseTurnsJson,
   randomInterCallDelayMs,
@@ -46,7 +46,7 @@ function assertThrows(fn: () => unknown, includes: string): void {
 Deno.test("rejects compact JSON input", () => {
   assertThrows(
     () =>
-      parseCompactOrFullJson(JSON.stringify({
+      parseTtsJsonInput(JSON.stringify({
         text: "Hello",
         prompt: "Read warmly.",
         voice: "Kore",
@@ -59,7 +59,7 @@ Deno.test("rejects compact JSON input", () => {
 Deno.test("rejects output paths in JSON input", () => {
   assertThrows(
     () =>
-      parseCompactOrFullJson(JSON.stringify({
+      parseTtsJsonInput(JSON.stringify({
         input: { text: ["Hello"] },
         out: "speech",
       })),
@@ -68,7 +68,7 @@ Deno.test("rejects output paths in JSON input", () => {
 });
 
 Deno.test("parses full request JSON text array", () => {
-  const options = parseCompactOrFullJson(JSON.stringify({
+  const options = parseTtsJsonInput(JSON.stringify({
     input: {
       text: ["Hello.", "Again."],
       prompt: "Read warmly.",
@@ -95,7 +95,7 @@ Deno.test("parses full request JSON text array", () => {
 });
 
 Deno.test("parses full request JSON structured turns", () => {
-  const options = parseCompactOrFullJson(JSON.stringify({
+  const options = parseTtsJsonInput(JSON.stringify({
     input: {
       prompt: "Conversation.",
       multiSpeakerMarkup: {
@@ -120,21 +120,21 @@ Deno.test("parses full request JSON structured turns", () => {
 Deno.test("validates JSON text arrays", () => {
   assertThrows(
     () =>
-      parseCompactOrFullJson(JSON.stringify({
+      parseTtsJsonInput(JSON.stringify({
         input: { text: "Hello" },
       })),
     "input.text must be an array of strings",
   );
   assertThrows(
     () =>
-      parseCompactOrFullJson(JSON.stringify({
+      parseTtsJsonInput(JSON.stringify({
         input: { text: [] },
       })),
     "input.text must include at least one text item",
   );
   assertThrows(
     () =>
-      parseCompactOrFullJson(JSON.stringify({
+      parseTtsJsonInput(JSON.stringify({
         input: { text: ["Hello", 1] },
       })),
     "input.text[1] must be a string",
@@ -147,7 +147,7 @@ Deno.test("creates valid full JSON template without out", () => {
   assert(!("out" in template));
 
   const options = resolveTtsOptions(
-    parseCompactOrFullJson(JSON.stringify(template)),
+    parseTtsJsonInput(JSON.stringify(template)),
     { out: "speech" },
   );
 
@@ -159,7 +159,7 @@ Deno.test("creates valid full JSON template without out", () => {
 });
 
 Deno.test("granular flags override JSON fields", () => {
-  const jsonOptions = parseCompactOrFullJson(JSON.stringify({
+  const jsonOptions = parseTtsJsonInput(JSON.stringify({
     input: { text: ["From JSON 1", "From JSON 2"] },
     voice: { name: "Kore" },
     audioConfig: { audioEncoding: "MP3" },
@@ -178,7 +178,7 @@ Deno.test("granular flags override JSON fields", () => {
 });
 
 Deno.test("CLI text overrides JSON dialogue fields", () => {
-  const jsonOptions = parseCompactOrFullJson(JSON.stringify({
+  const jsonOptions = parseTtsJsonInput(JSON.stringify({
     input: {
       multiSpeakerMarkup: {
         turns: [{ speaker: "Sam", text: "Hi." }],
@@ -201,7 +201,7 @@ Deno.test("CLI text overrides JSON dialogue fields", () => {
 });
 
 Deno.test("CLI turns override JSON text fields", () => {
-  const jsonOptions = parseCompactOrFullJson(JSON.stringify({
+  const jsonOptions = parseTtsJsonInput(JSON.stringify({
     input: { text: ["From JSON"] },
   }));
   const resolved = resolveTtsOptions(jsonOptions, {
@@ -215,7 +215,7 @@ Deno.test("CLI turns override JSON text fields", () => {
 });
 
 Deno.test("forces Gemini 3.1 model", () => {
-  const jsonOptions = parseCompactOrFullJson(JSON.stringify({
+  const jsonOptions = parseTtsJsonInput(JSON.stringify({
     input: { text: ["Hello"] },
     voice: {
       languageCode: "en-US",
@@ -281,6 +281,18 @@ Deno.test("validates speaker aliases", () => {
         out: "x",
       }),
     "alphanumeric",
+  );
+});
+
+Deno.test("validates speakers are only used with structured turns", () => {
+  assertThrows(
+    () =>
+      resolveTtsOptions({}, {
+        text: "Hello",
+        speakers: [parseSpeakerMapping("Sam=Kore")],
+        out: "speech",
+      }),
+    "structured turns",
   );
 });
 

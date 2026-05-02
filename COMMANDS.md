@@ -64,6 +64,7 @@ Validation:
 
 ```bash
 deno task check
+deno task lint
 deno task test
 deno publish --dry-run --allow-dirty
 deno run -A cli.ts --help
@@ -76,6 +77,7 @@ Rules:
 - Use `gemgen tts --json-template` to create editable full JSON input.
 - JSON `input.text` is an array; gemgen writes one output per string.
 - Pass output only with `-o, --out`; JSON `out` is rejected.
+- Use `--speaker` only with `--turn`, `--turns-file`, or JSON structured turns.
 - `--out path/to/file` writes the next `path/to/fileNNNN.<ext>` and creates the
   parent directory.
 - gemgen waits 5-10 seconds between generated items from one JSON text array.

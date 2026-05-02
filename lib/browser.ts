@@ -66,7 +66,7 @@ export async function synthesizeWithBrowser(
   let browser: Browser | undefined;
 
   try {
-    const { chromium } = await import("npm:playwright@1.52.0");
+    const { chromium } = await import("playwright");
     browser = await chromium.launch({ headless: false }) as Browser;
     const page = await browser.newPage();
 
@@ -106,13 +106,6 @@ export async function synthesizeWithBrowser(
         out: output.path,
         bytes: audio.byteLength,
         index: index + 1,
-        text: options.turns.length === 0 ? options.texts[index] : undefined,
-        voice: options.speakers.length === 0 ? options.voice : undefined,
-        language: options.language,
-        encoding: options.encoding,
-        profiles: options.profiles,
-        speakers: options.speakers,
-        turns: options.turns.length,
       });
 
       if (index < requests.length - 1) {
@@ -126,15 +119,11 @@ export async function synthesizeWithBrowser(
       }
     }
 
-    const firstOutput = outputs[0];
-
     return {
       ok: true,
       command: "tts",
       modelName: GEMINI_TTS_MODEL,
       outputs,
-      out: firstOutput?.out,
-      bytes: firstOutput?.bytes,
       voice: options.speakers.length === 0 ? options.voice : undefined,
       language: options.language,
       encoding: options.encoding,

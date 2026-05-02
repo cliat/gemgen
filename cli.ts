@@ -8,8 +8,8 @@ import denoConfig from "./deno.json" with { type: "json" };
 import { synthesizeWithBrowser } from "./lib/browser.ts";
 import {
   createTtsJsonTemplate,
-  parseCompactOrFullJson,
   parseSpeakerMapping,
+  parseTtsJsonInput,
   parseTurn,
   parseTurnsJson,
   resolveTtsOptions,
@@ -300,9 +300,9 @@ async function parseTtsArgs(
     throw new Error("Use only one of --input-file or --input-json.");
   }
   const jsonOptions = inputFile
-    ? parseCompactOrFullJson(await Deno.readTextFile(inputFile))
+    ? parseTtsJsonInput(await Deno.readTextFile(inputFile))
     : inputJson
-    ? parseCompactOrFullJson(inputJson)
+    ? parseTtsJsonInput(inputJson)
     : undefined;
 
   if (turnsFile) {

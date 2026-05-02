@@ -60,7 +60,7 @@ each next service call.
 | `-g, --volume-gain-db <number>` | `audioConfig.volumeGainDb`                            | `0`        | Range `-96..16`.                                                                                     |
 | `-s, --sample-rate <hz>`        | `audioConfig.sampleRateHertz`                         | omitted    | Positive integer hertz.                                                                              |
 | `--profile <id>`                | `audioConfig.effectsProfileId[]`                      | `[]`       | Repeatable; applied in order.                                                                        |
-| `--speaker <alias=voice>`       | `voice.multiSpeakerVoiceConfig.speakerVoiceConfigs[]` | `[]`       | Repeatable; alias must be alphanumeric. JSON uses `{ "speakerAlias": "...", "speakerId": "..." }`.   |
+| `--speaker <alias=voice>`       | `voice.multiSpeakerVoiceConfig.speakerVoiceConfigs[]` | `[]`       | Repeatable; use only with structured turns. Alias must be alphanumeric.                              |
 | `--turn <alias:text>`           | `input.multiSpeakerMarkup.turns[]`                    | `[]`       | Repeatable structured dialogue turn. JSON uses `{ "speaker": "...", "text": "..." }`.                |
 | `--turns-file <path>`           | n/a                                                   | omitted    | JSON array of `{ "speaker": "...", "text": "..." }`; replaces repeated `--turn` values.              |
 | `-i, --input-file <path>`       | full request object                                   | omitted    | Reads JSON shaped like `--json-template`.                                                            |
@@ -70,9 +70,9 @@ each next service call.
 | `--json`                        | n/a                                                   | false      | Stable JSON success output.                                                                          |
 
 `--profile` maps to `audioConfig.effectsProfileId`. `--speaker Sam=Kore` maps
-alias `Sam` to Gemini voice `Kore`. `--turn Sam:Hello` appends
-`{ "speaker": "Sam", "text": "Hello" }`. `--turns-file turns.json` reads the
-same array shape used by `input.multiSpeakerMarkup.turns`.
+alias `Sam` to Gemini voice `Kore` for structured dialogue. `--turn Sam:Hello`
+appends `{ "speaker": "Sam", "text": "Hello" }`. `--turns-file turns.json` reads
+the same array shape used by `input.multiSpeakerMarkup.turns`.
 
 `--out path/to/file` scans for `path/to/fileNNNN.<ext>`, creates the parent
 directory if needed, and writes the next number. If `path/to/file0004.wav`
@@ -98,7 +98,7 @@ calm soothing narration prompt.
       "Paste the first narration segment here.",
       "Paste the next narration segment here."
     ],
-    "prompt": "Calm, soothing narration. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses."
+    "prompt": "Calm, soothing narration ideal for falling asleep videos. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses."
   },
   "voice": {
     "languageCode": "en-US",
@@ -184,6 +184,7 @@ Markup tags: `[sigh]`, `[laughing]`, `[uhm]`, `[sarcasm]`, `[robotic]`,
 
 ```bash
 deno task check
+deno task lint
 deno task test
 deno publish --dry-run --allow-dirty
 deno publish
