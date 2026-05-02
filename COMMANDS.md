@@ -23,10 +23,11 @@ deno install -g -A -n gemgen jsr:@cliat/gemgen/cli
 gemgen tts --text "Hello" --out speech
 ```
 
-Install browser if needed:
+Install the browser driver if needed:
 
 ```bash
-deno run -A npm:playwright@1.52.0 install chromium
+npm install -g @playwright/cli
+playwright-cli install-browser --browser chrome
 ```
 
 Single speaker and style prompts:
@@ -50,7 +51,7 @@ JSON input:
 ```bash
 gemgen tts --json-template > request.json
 gemgen tts -i request.json -o batch
-gemgen tts --input-json '{"input":{"text":["Hello [short pause] again."],"prompt":"Gentle assistant."},"voice":{"name":"Aoede","languageCode":"en-US"},"audioConfig":{"audioEncoding":"MP3"}}' -o hello
+gemgen tts -i request.json -o batch --start-at 4
 ```
 
 Audio profiles:
@@ -75,12 +76,18 @@ Rules:
 
 - Use `--json` when parsing output.
 - Use `gemgen tts --json-template` to create editable full JSON input.
+- Pass JSON input only with `-i, --input <path>`.
 - JSON `input.text` is an array; gemgen writes one output per string.
+- Each JSON text item can be up to 4,000 UTF-8 bytes; prompt can be up to 4,000.
+- Use `--start-at N` to resume a JSON text-array batch from item `N`.
 - Pass output only with `-o, --out`; JSON `out` is rejected.
 - Use `--speaker` only with `--turn`, `--turns-file`, or JSON structured turns.
 - `--out path/to/file` writes the next `path/to/fileNNNN.<ext>` and creates the
   parent directory.
 - gemgen waits 5-10 seconds between generated items from one JSON text array.
+- gemgen retries transient demo/proxy failures for the same item.
 - CAPTCHA instructions appear on stderr; solve them in the visible browser.
+- On Windows, run headed generation directly; avoid PowerShell pipes or
+  `Tee-Object` around the `gemgen` process.
 - `voice.modelName` is always `gemini-3.1-flash-tts-preview`.
 - `temperature` is Vertex-only and is not exposed in this v1 public page flow.

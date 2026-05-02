@@ -1,14 +1,11 @@
 {
   "name": "@cliat/gemgen",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "license": "MIT",
   "lock": false,
   "exports": {
     ".": "./mod.ts",
     "./cli": "./cli.ts"
-  },
-  "imports": {
-    "playwright": "npm:playwright@1.52.0"
   },
   "lint": {
     "exclude": [
@@ -21,8 +18,13 @@
     "exclude": [
       ".agents",
       ".claude",
+      ".github",
+      ".playwright",
       ".playwright-cli",
+      "data",
       "deno.lock",
+      "node_modules",
+      "out",
       "skills-lock.json",
       "tests",
       "*.wav",

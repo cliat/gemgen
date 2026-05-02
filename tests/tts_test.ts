@@ -4,6 +4,8 @@ import {
   createTtsJsonTemplate,
   extensionForEncoding,
   GEMINI_TTS_MODEL,
+  MAX_PROMPT_BYTES,
+  MAX_TEXT_BYTES,
   parseSpeakerMapping,
   parseTtsJsonInput,
   parseTurn,
@@ -11,6 +13,7 @@ import {
   randomInterCallDelayMs,
   resolveSequencedOutputPath,
   resolveTtsOptions,
+  utf8ByteLength,
   writeSequencedOutput,
 } from "../mod.ts";
 
@@ -154,7 +157,7 @@ Deno.test("creates valid full JSON template without out", () => {
   assertEquals(options.texts[0], "Paste the first narration segment here.");
   assertEquals(options.sampleRateHertz, 48000);
   assertEquals(options.profiles, []);
-  assertEquals(options.voice, "Achernar");
+  assertEquals(options.voice, "Umbriel");
   assertEquals(options.out, "speech");
 });
 
@@ -272,6 +275,27 @@ Deno.test("validates numeric ranges", () => {
   );
 });
 
+Deno.test("validates documented text byte limits", () => {
+  assertEquals(utf8ByteLength("țară"), 6);
+  assertThrows(
+    () =>
+      resolveTtsOptions({}, {
+        text: "a".repeat(MAX_TEXT_BYTES + 1),
+        out: "speech",
+      }),
+    "UTF-8 bytes",
+  );
+  assertThrows(
+    () =>
+      resolveTtsOptions({}, {
+        text: "Hello",
+        prompt: "a".repeat(MAX_PROMPT_BYTES + 1),
+        out: "speech",
+      }),
+    "Prompt is",
+  );
+});
+
 Deno.test("validates speaker aliases", () => {
   assertThrows(
     () =>
@@ -366,6 +390,30 @@ Deno.test("builds one synthesis request per text item", () => {
   assertEquals(requests[0].input.text, "First");
   assertEquals(requests[1].input.text, "Second");
   assertEquals(requests[1].input.prompt, "Warm.");
+});
+
+Deno.test("validates start-at for text-array resumes", () => {
+  const options = resolveTtsOptions({}, {
+    texts: ["First", "Second"],
+    startAt: 2,
+    out: "speech",
+  });
+
+  assertEquals(options.startAt, 2);
+  assertThrows(
+    () => resolveTtsOptions({}, { text: "Only", startAt: 2, out: "speech" }),
+    "between 1 and 1",
+  );
+  assertThrows(
+    () =>
+      resolveTtsOptions({}, {
+        startAt: 2,
+        speakers: [parseSpeakerMapping("Sam=Kore")],
+        turns: [parseTurn("Sam:Hello")],
+        out: "speech",
+      }),
+    "text-array input",
+  );
 });
 
 Deno.test("builds a synthesis request with a text override", () => {

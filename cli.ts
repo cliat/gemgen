@@ -54,8 +54,8 @@ Options:
   --speaker <alias=voice>           Repeatable multi-speaker voice mapping.
   --turn <alias:text>               Repeatable structured dialogue turn.
   --turns-file <path>               JSON array of { "speaker": "...", "text": "..." }.
-  -i, --input-file <path>           Full JSON input. input.text is an array.
-  --input-json <json>               Full JSON input. input.text is an array.
+  --start-at <number>               Start at 1-based JSON input.text item. Default: 1.
+  -i, --input <path>                Full JSON input file. input.text is an array.
   --json-template                   Print a full JSON template/example and exit.
   -o, --out <path>                  Required output stem. Writes <path>0001.<ext>, then next sequence.
   --json                            Emit stable JSON to stdout.
@@ -172,8 +172,7 @@ async function parseTtsArgs(
   inheritedJson: boolean,
 ): Promise<ParsedTtsArgs> {
   const flagOptions: TtsFlagOverrides = {};
-  let inputFile: string | undefined;
-  let inputJson: string | undefined;
+  let inputPath: string | undefined;
   let json = inheritedJson;
   const profiles: string[] = [];
   const speakers = [];
@@ -184,6 +183,18 @@ async function parseTtsArgs(
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const [name, inlineValue] = splitInlineValue(arg);
+    const readString = () => {
+      if (inlineValue !== undefined) return inlineValue;
+      return readValue(args, ++index, name);
+    };
+    const readNumeric = () => {
+      const value = readString();
+      const number = Number(value);
+      if (!Number.isFinite(number)) {
+        throw new Error(`${name} requires a finite number.`);
+      }
+      return number;
+    };
 
     switch (name) {
       case "--json":
@@ -191,85 +202,58 @@ async function parseTtsArgs(
         break;
       case "-t":
       case "--text":
-        flagOptions.text = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.text = readString();
         break;
       case "-p":
       case "--prompt":
-        flagOptions.prompt = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.prompt = readString();
         break;
       case "-v":
       case "--voice":
-        flagOptions.voice = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.voice = readString();
         break;
       case "-l":
       case "--language":
-        flagOptions.language = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.language = readString();
         break;
       case "-e":
       case "--encoding":
-        flagOptions.encoding = readValue(
-          args,
-          ++index,
-          name,
-          inlineValue,
-        ) as TtsFlagOverrides["encoding"];
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.encoding = readString() as TtsFlagOverrides["encoding"];
         break;
       case "-r":
       case "--speaking-rate":
-        flagOptions.speakingRate = readNumber(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.speakingRate = readNumeric();
         break;
       case "-P":
       case "--pitch":
-        flagOptions.pitch = readNumber(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.pitch = readNumeric();
         break;
       case "-g":
       case "--volume-gain-db":
-        flagOptions.volumeGainDb = readNumber(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.volumeGainDb = readNumeric();
         break;
       case "-s":
       case "--sample-rate":
-        flagOptions.sampleRateHertz = readNumber(
-          args,
-          ++index,
-          name,
-          inlineValue,
-        );
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.sampleRateHertz = readNumeric();
         break;
       case "--profile":
-        profiles.push(readValue(args, ++index, name, inlineValue));
-        if (inlineValue !== undefined) index -= 1;
+        profiles.push(readString());
         break;
       case "--speaker":
-        speakers.push(
-          parseSpeakerMapping(readValue(args, ++index, name, inlineValue)),
-        );
-        if (inlineValue !== undefined) index -= 1;
+        speakers.push(parseSpeakerMapping(readString()));
         break;
       case "--turn":
-        turns.push(parseTurn(readValue(args, ++index, name, inlineValue)));
-        if (inlineValue !== undefined) index -= 1;
+        turns.push(parseTurn(readString()));
         break;
       case "--turns-file":
-        turnsFile = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        turnsFile = readString();
+        break;
+      case "--start-at":
+        flagOptions.startAt = readNumeric();
         break;
       case "-i":
-      case "--input-file":
-        inputFile = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
-        break;
-      case "--input-json":
-        inputJson = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+      case "--input":
+        inputPath = readString();
         break;
       case "--json-template": {
         if (inlineValue !== undefined) {
@@ -284,8 +268,7 @@ async function parseTtsArgs(
       }
       case "-o":
       case "--out":
-        flagOptions.out = readValue(args, ++index, name, inlineValue);
-        if (inlineValue !== undefined) index -= 1;
+        flagOptions.out = readString();
         break;
       default:
         throw new Error(`Unknown tts option "${arg}".`);
@@ -296,13 +279,8 @@ async function parseTtsArgs(
   if (speakers.length > 0) flagOptions.speakers = speakers;
   if (turns.length > 0) flagOptions.turns = turns;
 
-  if (inputFile && inputJson) {
-    throw new Error("Use only one of --input-file or --input-json.");
-  }
-  const jsonOptions = inputFile
-    ? parseTtsJsonInput(await Deno.readTextFile(inputFile))
-    : inputJson
-    ? parseTtsJsonInput(inputJson)
+  const jsonOptions = inputPath
+    ? parseTtsJsonInput(await Deno.readTextFile(inputPath))
     : undefined;
 
   if (turnsFile) {
@@ -323,26 +301,10 @@ function readValue(
   args: string[],
   index: number,
   name: string,
-  inlineValue?: string,
 ): string {
-  if (inlineValue !== undefined) return inlineValue;
   const value = args[index];
   if (value === undefined) throw new Error(`${name} requires a value.`);
   return value;
-}
-
-function readNumber(
-  args: string[],
-  index: number,
-  name: string,
-  inlineValue?: string,
-): number {
-  const value = readValue(args, index, name, inlineValue);
-  const number = Number(value);
-  if (!Number.isFinite(number)) {
-    throw new Error(`${name} requires a finite number.`);
-  }
-  return number;
 }
 
 if (import.meta.main) {

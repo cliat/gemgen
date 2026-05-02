@@ -1,10 +1,13 @@
 # Deno / package outputs
 deno.lock
+node_modules/
 bin/
 dist/
 coverage/
 
 # Generated audio
+out/
+data/
 *.wav
 *.mp3
 *.ogg
@@ -14,6 +17,7 @@ coverage/
 *.mulaw
 
 # Browser automation artifacts
+.playwright/
 .playwright-cli/
 playwright-report/
 test-results/

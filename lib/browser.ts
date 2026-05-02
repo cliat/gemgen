@@ -6,95 +6,65 @@ import {
   type ResolvedTtsOptions,
   type TtsOutputResult,
   type TtsRunResult,
+  utf8ByteLength,
 } from "./tts.ts";
 import { writeSequencedOutput } from "./output.ts";
+import { buildDemoSubmitCode } from "./demo_page_script.ts";
 
 const CLOUD_TTS_PAGE = "https://cloud.google.com/text-to-speech";
 const DEMO_PAGE =
   "https://www.gstatic.com/cloud-site-ux/text_to_speech/text_to_speech.min.html";
 const SYNTHESIZE_URL =
   "https://texttospeech.googleapis.com/v1beta1/text:synthesize";
-const PLAYWRIGHT_PACKAGE = "npm:playwright@1.52.0";
+const PLAYWRIGHT_CLI_COMMAND = "playwright-cli";
+const PLAYWRIGHT_BROWSER = "chrome";
 const PROXY_TIMEOUT_MS = 120_000;
+const SYNTHESIS_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 30_000;
+
+const textDecoder = new TextDecoder();
 
 export function randomInterCallDelayMs(random = Math.random): number {
   return Math.min(10_000, Math.floor(5_000 + random() * 5_001));
 }
 
-type DemoFrame = {
-  evaluate: <T>(
-    pageFunction: (arg?: unknown) => T | Promise<T>,
-    arg?: unknown,
-  ) => Promise<T>;
-  waitForFunction: (
-    pageFunction: (...args: unknown[]) => unknown,
-    arg?: unknown,
-    options?: { timeout?: number },
-  ) => Promise<unknown>;
-  url: () => string;
-};
-
-type BrowserPage = {
-  goto: (url: string, options?: Record<string, unknown>) => Promise<unknown>;
-  waitForLoadState: (
-    state: string,
-    options?: Record<string, unknown>,
-  ) => Promise<unknown>;
-  waitForTimeout: (timeout: number) => Promise<unknown>;
-  frames: () => DemoFrame[];
-  mainFrame: () => DemoFrame;
-  evaluate: <T>(
-    pageFunction: (arg?: unknown) => T | Promise<T>,
-    arg?: unknown,
-  ) => Promise<T>;
-  getByRole: (role: string, options?: Record<string, unknown>) => {
-    click: (options?: Record<string, unknown>) => Promise<unknown>;
-  };
-};
-
-type Browser = {
-  newPage: () => Promise<BrowserPage>;
-  close: () => Promise<void>;
-};
-
 export async function synthesizeWithBrowser(
   options: ResolvedTtsOptions,
   log: Logger = () => {},
 ): Promise<TtsRunResult> {
-  const requests = buildSynthesizeRequests(options);
+  const allRequests = buildSynthesizeRequests(options);
+  const requestOffset = options.turns.length > 0 ? 0 : options.startAt - 1;
+  const requests = allRequests.slice(requestOffset);
   const outputs: TtsOutputResult[] = [];
-  let browser: Browser | undefined;
+  const sessionName = createSessionName();
+  let opened = false;
 
   try {
-    const { chromium } = await import("playwright");
-    browser = await chromium.launch({ headless: false }) as Browser;
-    const page = await browser.newPage();
-
-    log(`Opening ${CLOUD_TTS_PAGE}`);
-    await page.goto(CLOUD_TTS_PAGE, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    });
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(
-      () => {},
-    );
-    await acceptCookies(page);
-
-    const frame = await findDemoFrame(page, log);
+    await openCliSession(sessionName, log);
+    opened = true;
 
     for (const [index, request] of requests.entries()) {
+      const originalIndex = requestOffset + index + 1;
+      const requestLabel = `${originalIndex}/${allRequests.length}`;
       if (requests.length > 1) {
-        log(`Preparing synthesis request ${index + 1}/${requests.length}.`);
-      }
-      await prepareDemoFrame(frame, request, options);
-
-      const response = await submitWithCaptchaIfNeeded(frame, request, log);
-      if (!response.audioContent || typeof response.audioContent !== "string") {
-        throw new Error(
-          "Text-to-Speech response did not include audioContent.",
+        const text = options.turns.length === 0
+          ? options.texts[originalIndex - 1]
+          : "";
+        const textBytes = text ? utf8ByteLength(text) : 0;
+        const promptBytes = options.prompt ? utf8ByteLength(options.prompt) : 0;
+        log(
+          `Preparing synthesis request ${requestLabel} (${textBytes} text bytes, ${promptBytes} prompt bytes, voice ${
+            voiceLabel(options)
+          }, language ${options.language}).`,
         );
       }
 
+      const response = await submitWithRetries(
+        sessionName,
+        request,
+        log,
+        requestLabel,
+      );
       const audio = decodeAudioContent(response.audioContent);
       const output = await writeSequencedOutput(
         options.out,
@@ -105,7 +75,7 @@ export async function synthesizeWithBrowser(
       outputs.push({
         out: output.path,
         bytes: audio.byteLength,
-        index: index + 1,
+        index: originalIndex,
       });
 
       if (index < requests.length - 1) {
@@ -115,7 +85,7 @@ export async function synthesizeWithBrowser(
             (delay / 1000).toFixed(1)
           }s before the next synthesis request.`,
         );
-        await page.waitForTimeout(delay);
+        await sleep(delay);
       }
     }
 
@@ -131,267 +101,362 @@ export async function synthesizeWithBrowser(
       speakers: options.speakers,
       turns: options.turns.length,
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      message.includes("Executable doesn't exist") ||
-      message.includes("Please run the following command")
-    ) {
-      throw new Error(
-        `Playwright Chromium is not installed. Run: deno run -A ${PLAYWRIGHT_PACKAGE} install chromium`,
-      );
-    }
-    throw error;
   } finally {
-    if (browser) await closeBrowser(browser, log);
+    if (opened) await closeCliSession(sessionName, log);
   }
 }
 
-async function closeBrowser(browser: Browser, log: Logger): Promise<void> {
-  const closed = await Promise.race([
-    browser.close().then(() => true).catch(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000)),
-  ]);
-
-  if (!closed) {
-    log("Browser close timed out; continuing shutdown.");
-  }
-}
-
-async function acceptCookies(page: BrowserPage): Promise<void> {
-  const names = [
-    /Accept all/i,
-    /Accept/i,
-    /Agree/i,
-  ];
-
-  for (const name of names) {
-    await page.getByRole("button", { name }).click({ timeout: 2_000 }).catch(
-      () => {},
-    );
-  }
-}
-
-async function findDemoFrame(
-  page: BrowserPage,
+async function openCliSession(
+  sessionName: string,
   log: Logger,
-): Promise<DemoFrame> {
-  await page.evaluate(() =>
-    (globalThis as unknown as {
-      scrollTo: (x: number, y: number) => void;
-      document: { body: { scrollHeight: number } };
-    }).scrollTo(
-      0,
-      Math.max(
-        0,
-        (globalThis as unknown as {
-          document: { body: { scrollHeight: number } };
-        })
-          .document.body.scrollHeight * 0.25,
-      ),
-    )
-  )
-    .catch(() => {});
-  await page.waitForTimeout(2_000);
-
-  let frame = page.frames().find((candidate) =>
-    candidate.url().includes("text_to_speech")
-  );
-  if (frame) return frame;
-
-  log(
-    "Embedded demo was not found on the product page; opening the public demo frame directly.",
-  );
-  await page.goto(DEMO_PAGE, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(
-    () => {},
-  );
-  frame = page.mainFrame();
-  await waitForTsApp(frame);
-  return frame;
-}
-
-async function waitForTsApp(frame: DemoFrame): Promise<void> {
-  await frame.waitForFunction(
-    () =>
-      Boolean(
-        (globalThis as unknown as {
-          document: { querySelector: (selector: string) => unknown };
-        }).document.querySelector("ts-app"),
-      ),
-    undefined,
-    { timeout: 60_000 },
-  );
-}
-
-async function prepareDemoFrame(
-  frame: DemoFrame,
-  request: unknown,
-  options: ResolvedTtsOptions,
 ): Promise<void> {
-  await waitForTsApp(frame);
-  await frame.evaluate(
-    (payload) => {
-      const { rawRequest, rawOptions } = payload as {
-        rawRequest: unknown;
-        rawOptions: Record<string, unknown>;
-      };
-      const app = (globalThis as unknown as {
-        document: { querySelector: (selector: string) => unknown };
-      }).document.querySelector("ts-app") as Record<string, unknown>;
-      const requestObject = rawRequest as Record<string, unknown>;
-      const opts = rawOptions as Record<string, unknown>;
+  log(`Opening ${CLOUD_TTS_PAGE} in headed Google Chrome via playwright-cli.`);
+  await runPlaywrightCli([
+    `-s=${sessionName}`,
+    "open",
+    CLOUD_TTS_PAGE,
+    "--browser",
+    PLAYWRIGHT_BROWSER,
+    "--headed",
+  ], "playwright-cli open");
+}
 
-      app.modelSelected = "gemini-3.1-flash-tts-preview";
-      app.requestObject = requestObject;
-
-      const input = requestObject.input as Record<string, unknown> | undefined;
-      if (typeof input?.text === "string") app.textInput = input.text;
-      if (typeof input?.prompt === "string") app.promptInput = input.prompt;
-      if (input?.multiSpeakerMarkup) {
-        const turns =
-          (input.multiSpeakerMarkup as Record<string, unknown>).turns;
-        if (Array.isArray(turns)) {
-          app.textInput = turns.map((turn) =>
-            `${(turn as Record<string, unknown>).speaker}: ${
-              (turn as Record<string, unknown>).text
-            }`
-          ).join("\n");
-        }
-      }
-
-      const languages = app.languagesAvailable;
-      if (Array.isArray(languages) && typeof opts.language === "string") {
-        const match = languages.find((language) =>
-          typeof language === "object" &&
-          language !== null &&
-          String((language as Record<string, unknown>).code).toLowerCase() ===
-            String(opts.language).toLowerCase()
-        );
-        if (match) app.languageSelected = match;
-      }
-
-      if (typeof opts.voice === "string") app.voiceSelected = opts.voice;
-    },
-    {
-      rawRequest: request,
-      rawOptions: {
-        language: options.language,
-        voice: options.voice,
-      },
-    },
+async function closeCliSession(
+  sessionName: string,
+  log: Logger,
+): Promise<void> {
+  const result = await runPlaywrightCli(
+    [
+      `-s=${sessionName}`,
+      "close",
+    ],
+    "playwright-cli close",
+    { allowFailure: true },
   );
+  if (result.code !== 0) {
+    log("playwright-cli close failed; the browser session may still be open.");
+  }
+}
+
+async function submitWithRetries(
+  sessionName: string,
+  request: unknown,
+  log: Logger,
+  requestLabel: string,
+): Promise<AudioSynthesizeResponse> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= SYNTHESIS_ATTEMPTS; attempt += 1) {
+    try {
+      if (attempt > 1) {
+        log(
+          `Retrying synthesis request ${requestLabel} (attempt ${attempt}/${SYNTHESIS_ATTEMPTS}).`,
+        );
+      }
+      const response = await submitWithCaptchaIfNeeded(
+        sessionName,
+        request,
+        log,
+      );
+      assertAudioResponse(response);
+      return response;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= SYNTHESIS_ATTEMPTS || !isRetryableError(message)) {
+        throw new Error(`Synthesis request ${requestLabel} failed: ${message}`);
+      }
+      log(
+        `Synthesis request ${requestLabel} failed: ${message}. Waiting ${
+          (RETRY_DELAY_MS / 1000).toFixed(0)
+        }s before retry.`,
+      );
+      await sleep(RETRY_DELAY_MS);
+    }
+  }
+
+  const message = lastError instanceof Error
+    ? lastError.message
+    : String(lastError);
+  throw new Error(`Synthesis request ${requestLabel} failed: ${message}`);
 }
 
 async function submitWithCaptchaIfNeeded(
-  frame: DemoFrame,
+  sessionName: string,
   request: unknown,
   log: Logger,
-): Promise<{ audioContent?: string }> {
-  log("Submitting synthesis request through the demo proxy.");
-  let result = await trySubmit(frame, request);
-  if (result.needsCaptcha) {
-    log(
-      "CAPTCHA required. Solve it in the visible browser; gemgen will continue automatically.",
-    );
-    await frame.waitForFunction(
-      () => {
-        const app = (globalThis as unknown as {
-          document: { querySelector: (selector: string) => unknown };
-        }).document.querySelector("ts-app") as Record<string, unknown> | null;
-        return Boolean(app?.captchaToken);
-      },
-      undefined,
-      { timeout: 0 },
-    );
-    log("CAPTCHA solved; submitting synthesis request.");
-    result = await trySubmit(frame, request);
-  }
-
-  if (result.error) throw new Error(result.error);
-  return result.response as { audioContent?: string };
-}
-
-async function trySubmit(
-  frame: DemoFrame,
-  request: unknown,
-): Promise<{ needsCaptcha?: true; response?: unknown; error?: string }> {
-  return await frame.evaluate(
-    async (payload) => {
-      const { rawRequest, synthesizeUrl, proxyTimeoutMs } = payload as {
-        rawRequest: unknown;
-        synthesizeUrl: string;
-        proxyTimeoutMs: number;
-      };
-      const app = (globalThis as unknown as {
-        document: { querySelector: (selector: string) => unknown };
-      }).document.querySelector("ts-app") as {
-        captchaToken?: string;
-        requestObject?: unknown;
-        shouldShowCaptcha?: boolean;
-        controlsEnabled?: boolean;
-        set?: (path: string, value: unknown) => void;
-        verifyUser_?: () => void;
-        setAndStartAudio_?: () => void;
-        sendAudioRequest_?: (url: string, body: unknown) => Promise<string>;
-        __gemgenPatched?: boolean;
-      } | null;
-
-      if (!app) return { error: "Could not find the Text-to-Speech demo app." };
-      if (typeof app.sendAudioRequest_ !== "function") {
-        return {
-          error:
-            "The Text-to-Speech demo app does not expose sendAudioRequest_.",
-        };
-      }
-
-      app.requestObject = rawRequest;
-
-      if (!app.captchaToken) {
-        if (!app.__gemgenPatched) {
-          app.setAndStartAudio_ = () => {};
-          app.__gemgenPatched = true;
-        }
-        app.shouldShowCaptcha = true;
-        app.controlsEnabled = false;
-        app.set?.("audio.state", "loading");
-        app.verifyUser_?.();
-        return { needsCaptcha: true };
-      }
-
-      let text: string;
-      try {
-        text = await Promise.race([
-          app.sendAudioRequest_(String(synthesizeUrl), rawRequest),
-          new Promise<string>((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Timed out waiting for the demo proxy.")),
-              proxyTimeoutMs,
-            )
-          ),
-        ]);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { error: message };
-      }
-
-      try {
-        return { response: JSON.parse(text) };
-      } catch {
-        return {
-          error: `Text-to-Speech proxy returned non-JSON response: ${
-            text.slice(0, 160)
-          }`,
-        };
-      }
-    },
-    {
-      rawRequest: request,
+): Promise<SynthesizeResponse> {
+  log(
+    "Submitting synthesis request through the demo proxy. If CAPTCHA appears, solve it in the visible Chrome window.",
+  );
+  const response = await runPlaywrightCode<SynthesizeResponse>(
+    sessionName,
+    buildDemoSubmitCode(request, {
+      cloudTtsPage: CLOUD_TTS_PAGE,
+      demoPage: DEMO_PAGE,
       synthesizeUrl: SYNTHESIZE_URL,
       proxyTimeoutMs: PROXY_TIMEOUT_MS,
-    },
+    }),
   );
+  const upstreamError = responseErrorMessage(response);
+  if (upstreamError) throw new Error(upstreamError);
+  return response;
+}
+
+async function runPlaywrightCode<T>(
+  sessionName: string,
+  code: string,
+): Promise<T> {
+  const result = await runPlaywrightCli([
+    `-s=${sessionName}`,
+    "run-code",
+    code,
+  ], "playwright-cli run-code");
+  return extractCliResult<T>(result.stdout);
+}
+
+type PlaywrightCliRunOptions = {
+  allowFailure?: boolean;
+};
+
+type PlaywrightCliRunResult = {
+  code: number;
+  stdout: string;
+  stderr: string;
+};
+
+type PlaywrightCliInvocation = {
+  command: string;
+  argsPrefix: string[];
+};
+
+let cachedPlaywrightCliInvocation: PlaywrightCliInvocation | undefined;
+
+async function runPlaywrightCli(
+  args: string[],
+  label: string,
+  options: PlaywrightCliRunOptions = {},
+): Promise<PlaywrightCliRunResult> {
+  const invocation = await playwrightCliInvocation();
+  let output: Deno.CommandOutput;
+  try {
+    output = await new Deno.Command(invocation.command, {
+      args: [...invocation.argsPrefix, ...args],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(
+        "playwright-cli was not found on PATH. Install it with: npm install -g @playwright/cli. Then run: playwright-cli install-browser --browser chrome",
+      );
+    }
+    throw error;
+  }
+
+  const stdout = textDecoder.decode(output.stdout);
+  const stderr = textDecoder.decode(output.stderr);
+  const result = { code: output.code, stdout, stderr };
+  if (output.success || options.allowFailure) return result;
+
+  throw new Error(formatCliFailure(label, result));
+}
+
+async function playwrightCliInvocation(): Promise<PlaywrightCliInvocation> {
+  if (cachedPlaywrightCliInvocation) return cachedPlaywrightCliInvocation;
+
+  const override = Deno.env.get("GEMGEN_PLAYWRIGHT_CLI")?.trim();
+  if (override) {
+    cachedPlaywrightCliInvocation = { command: override, argsPrefix: [] };
+    return cachedPlaywrightCliInvocation;
+  }
+
+  if (Deno.build.os === "windows") {
+    const windowsInvocation = await findWindowsPlaywrightCliInvocation();
+    if (windowsInvocation) {
+      cachedPlaywrightCliInvocation = windowsInvocation;
+      return windowsInvocation;
+    }
+  }
+
+  cachedPlaywrightCliInvocation = {
+    command: PLAYWRIGHT_CLI_COMMAND,
+    argsPrefix: [],
+  };
+  return cachedPlaywrightCliInvocation;
+}
+
+async function findWindowsPlaywrightCliInvocation(): Promise<
+  PlaywrightCliInvocation | undefined
+> {
+  const path = Deno.env.get("PATH") ?? "";
+  for (const rawDirectory of path.split(";")) {
+    const directory = rawDirectory.trim().replace(/^"|"$/g, "");
+    if (!directory) continue;
+    const hasShim =
+      await fileExists(joinPath(directory, "playwright-cli.cmd")) ||
+      await fileExists(joinPath(directory, "playwright-cli.ps1")) ||
+      await fileExists(joinPath(directory, "playwright-cli"));
+    if (!hasShim) continue;
+
+    const cliJs = joinPath(
+      directory,
+      "node_modules",
+      "@playwright",
+      "cli",
+      "playwright-cli.js",
+    );
+    if (!await fileExists(cliJs)) continue;
+
+    const localNode = joinPath(directory, "node.exe");
+    return {
+      command: await fileExists(localNode) ? localNode : "node",
+      argsPrefix: [cliJs],
+    };
+  }
+  return undefined;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
+}
+
+function joinPath(...parts: string[]): string {
+  const separator = Deno.build.os === "windows" ? "\\" : "/";
+  return parts
+    .map((part, index) =>
+      index === 0 ? part.replace(/[\\/]$/g, "") : part.replace(/^[\\/]/g, "")
+    )
+    .filter(Boolean)
+    .join(separator);
+}
+
+function formatCliFailure(
+  label: string,
+  result: PlaywrightCliRunResult,
+): string {
+  const details = [result.stderr.trim(), result.stdout.trim()].filter(Boolean)
+    .join("\n");
+  return `${label} failed with exit code ${result.code}${
+    details ? `:\n${details}` : "."
+  }`;
+}
+
+function extractCliResult<T>(stdout: string): T {
+  const marker = "### Result";
+  const start = stdout.indexOf(marker);
+  if (start < 0) {
+    throw new Error(
+      `playwright-cli did not return a result block. Output: ${
+        truncate(stdout.trim())
+      }`,
+    );
+  }
+
+  const afterMarker = stdout.slice(start + marker.length).replace(
+    /^\r?\n/,
+    "",
+  );
+  const nextSection = afterMarker.search(/\r?\n### /);
+  const json =
+    (nextSection >= 0 ? afterMarker.slice(0, nextSection) : afterMarker).trim();
+
+  try {
+    return JSON.parse(json) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not parse playwright-cli result JSON: ${message}. Result: ${
+        truncate(json)
+      }`,
+    );
+  }
+}
+
+type SynthesizeResponse = {
+  audioContent?: string;
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+  };
+};
+
+type AudioSynthesizeResponse = SynthesizeResponse & { audioContent: string };
+
+function responseErrorMessage(
+  response: SynthesizeResponse | undefined,
+): string | undefined {
+  if (!response?.error) return undefined;
+  const parts = [
+    response.error.status,
+    response.error.code === undefined ? undefined : String(response.error.code),
+    response.error.message,
+  ].filter(Boolean);
+  return parts.length > 0
+    ? `Text-to-Speech proxy error: ${parts.join(" - ")}`
+    : "Text-to-Speech proxy returned an error.";
+}
+
+function assertAudioResponse(
+  response: SynthesizeResponse,
+): asserts response is AudioSynthesizeResponse {
+  if (typeof response.audioContent === "string") return;
+  throw new Error(
+    `Text-to-Speech response did not include audioContent. Response keys: ${
+      Object.keys(response).join(", ") || "none"
+    }.`,
+  );
+}
+
+function isRetryableError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("invalid_argument") ||
+    normalized.includes("not supported") ||
+    normalized.includes("must be") ||
+    normalized.includes("maximum")
+  ) {
+    return false;
+  }
+  return normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("429") ||
+    normalized.includes("500") ||
+    normalized.includes("502") ||
+    normalized.includes("503") ||
+    normalized.includes("504") ||
+    normalized.includes("resource_exhausted") ||
+    normalized.includes("unavailable") ||
+    normalized.includes("rate") ||
+    normalized.includes("quota") ||
+    normalized.includes("captcha") ||
+    normalized.includes("proxy") ||
+    normalized.includes("no response") ||
+    normalized.includes("network") ||
+    normalized.includes("a result block") ||
+    normalized.includes("audioContent".toLowerCase());
+}
+
+function voiceLabel(options: ResolvedTtsOptions): string {
+  if (options.speakers.length === 0) return options.voice;
+  return options.speakers.map((speaker) => `${speaker.alias}=${speaker.voice}`)
+    .join(",");
+}
+
+function createSessionName(): string {
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+  return `gemgen_${Date.now()}_${random}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function truncate(value: string, length = 500): string {
+  return value.length > length ? `${value.slice(0, length)}...` : value;
 }

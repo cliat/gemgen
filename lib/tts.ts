@@ -1,4 +1,7 @@
 export const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+export const MAX_TEXT_BYTES = 4_000;
+export const MAX_PROMPT_BYTES = 4_000;
+export const MAX_TOTAL_TEXT_PROMPT_BYTES = 8_000;
 
 export const ENCODINGS = [
   "LINEAR16",
@@ -185,6 +188,7 @@ export type TtsOptions = {
   profiles: string[];
   speakers: SpeakerMapping[];
   turns: Turn[];
+  startAt: number;
   out?: string;
 };
 
@@ -297,7 +301,14 @@ const DEFAULT_OPTIONS: TtsOptions = {
   profiles: [],
   speakers: [],
   turns: [],
+  startAt: 1,
 };
+
+const textEncoder = new TextEncoder();
+
+export function utf8ByteLength(value: string): number {
+  return textEncoder.encode(value).byteLength;
+}
 
 export function createTtsJsonTemplate(): FullSynthesizeRequest {
   return {
@@ -307,11 +318,11 @@ export function createTtsJsonTemplate(): FullSynthesizeRequest {
         "Paste the next narration segment here.",
       ],
       prompt:
-        "Calm, soothing narration ideal for falling asleep videos. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses.",
+        "Calm, soothing narration. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses.",
     },
     voice: {
       languageCode: "en-US",
-      name: "Achernar",
+      name: "Umbriel",
       modelName: GEMINI_TTS_MODEL,
     },
     audioConfig: {
@@ -483,11 +494,6 @@ export function parseTtsJsonInput(json: string): TtsFlagOverrides {
     );
   }
   return normalizeFullJson(value);
-}
-
-/** @deprecated Use parseTtsJsonInput. Compact JSON is no longer supported. */
-export function parseCompactOrFullJson(json: string): TtsFlagOverrides {
-  return parseTtsJsonInput(json);
 }
 
 export function isFullSynthesizeRequest(
@@ -664,9 +670,48 @@ export function validateTtsOptions(options: TtsOptions): void {
     throw new Error("Use --speaker only with structured turns.");
   }
 
+  if (!Number.isInteger(options.startAt) || options.startAt < 1) {
+    throw new Error("start-at must be a positive integer.");
+  }
+
+  if (options.turns.length > 0 && options.startAt !== 1) {
+    throw new Error("start-at can only be used with text-array input.");
+  }
+
+  if (options.texts.length > 0 && options.startAt > options.texts.length) {
+    throw new Error(
+      `start-at must be between 1 and ${options.texts.length} for this input.`,
+    );
+  }
+
+  const promptBytes = options.prompt === undefined
+    ? 0
+    : utf8ByteLength(options.prompt);
+  if (promptBytes > MAX_PROMPT_BYTES) {
+    throw new Error(
+      `Prompt is ${promptBytes} UTF-8 bytes; maximum is ${MAX_PROMPT_BYTES}.`,
+    );
+  }
+
   for (const [index, text] of options.texts.entries()) {
     if (typeof text !== "string" || text.trim() === "") {
       throw new Error(`Text item ${index} must be a non-empty string.`);
+    }
+    const textBytes = utf8ByteLength(text);
+    if (textBytes > MAX_TEXT_BYTES) {
+      throw new Error(
+        `Text item ${
+          index + 1
+        } is ${textBytes} UTF-8 bytes; maximum is ${MAX_TEXT_BYTES}.`,
+      );
+    }
+    const totalBytes = textBytes + promptBytes;
+    if (totalBytes > MAX_TOTAL_TEXT_PROMPT_BYTES) {
+      throw new Error(
+        `Text item ${
+          index + 1
+        } plus prompt is ${totalBytes} UTF-8 bytes; maximum is ${MAX_TOTAL_TEXT_PROMPT_BYTES}.`,
+      );
     }
   }
 

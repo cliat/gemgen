@@ -1,6 +1,6 @@
 # gemgen
 
-Gemini-TTS CLI for the Google Cloud Text-to-Speech public browser demo. v1 has
+Gemini-TTS CLI for the Google Cloud Text-to-Speech public browser demo. It has
 one command, `gemgen tts`, and always forces `voice.modelName` to
 `gemini-3.1-flash-tts-preview`.
 
@@ -15,14 +15,15 @@ deno x -A jsr:@cliat/gemgen/cli tts --text "Hello" --out speech
 deno install -g -A -n gemgen jsr:@cliat/gemgen/cli
 ```
 
-The command launches headed Chromium every run, opens
-`https://cloud.google.com/text-to-speech`, uses the embedded demo context, waits
-for any CAPTCHA in the visible browser, decodes `audioContent`, writes the next
-sequenced file for `--out`, and closes the browser. Run once before first use if
-Chromium is missing:
+The command launches headed Google Chrome through `playwright-cli` on `PATH`
+every run, opens `https://cloud.google.com/text-to-speech`, uses the embedded
+demo context, waits for any CAPTCHA in the visible browser, decodes
+`audioContent`, writes the next sequenced file for `--out`, and closes the
+browser. Install the browser driver once if needed:
 
 ```bash
-deno run -A npm:playwright@1.52.0 install chromium
+npm install -g @playwright/cli
+playwright-cli install-browser --browser chrome
 ```
 
 ## Commands
@@ -39,13 +40,24 @@ deno run -A cli.ts tts --help
 `--json` prints one stable success object to stdout. Progress, CAPTCHA
 instructions, and errors go to stderr. `outputs[]` lists every file written.
 
+On Windows, run headed browser generation directly in a visible console window.
+Avoid wrapping the `gemgen` process in PowerShell pipes or `Tee-Object`; those
+can interfere with browser-launch handles.
+
+Library import:
+
+```ts
+import { createTtsJsonTemplate, parseTtsJsonInput } from "jsr:@cliat/gemgen";
+```
+
 ## Options And JSON
 
 Granular flags override JSON fields. JSON input overrides defaults. `--out` is
 CLI-only and is never read from JSON. `input.text` is an array in JSON; each
 string is submitted as a separate service call with the same settings. `--text`
 accepts one string and overrides JSON text. gemgen waits 5-10 seconds before
-each next service call.
+each next service call and retries transient demo/proxy failures for the same
+item.
 
 | Flag                            | JSON field                                            | Default    | Notes                                                                                                |
 | ------------------------------- | ----------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
@@ -63,8 +75,8 @@ each next service call.
 | `--speaker <alias=voice>`       | `voice.multiSpeakerVoiceConfig.speakerVoiceConfigs[]` | `[]`       | Repeatable; use only with structured turns. Alias must be alphanumeric.                              |
 | `--turn <alias:text>`           | `input.multiSpeakerMarkup.turns[]`                    | `[]`       | Repeatable structured dialogue turn. JSON uses `{ "speaker": "...", "text": "..." }`.                |
 | `--turns-file <path>`           | n/a                                                   | omitted    | JSON array of `{ "speaker": "...", "text": "..." }`; replaces repeated `--turn` values.              |
-| `-i, --input-file <path>`       | full request object                                   | omitted    | Reads JSON shaped like `--json-template`.                                                            |
-| `--input-json <json>`           | full request object                                   | omitted    | Inline full JSON.                                                                                    |
+| `--start-at <number>`           | n/a                                                   | `1`        | Resume text-array input from the 1-based item number.                                                |
+| `-i, --input <path>`            | full request object                                   | omitted    | Reads JSON shaped like `--json-template`.                                                            |
 | `--json-template`               | n/a                                                   | n/a        | Prints a full JSON template/example and exits.                                                       |
 | `-o, --out <path>`              | n/a                                                   | required   | Output stem. Creates parent dirs and writes the next numbered file.                                  |
 | `--json`                        | n/a                                                   | false      | Stable JSON success output.                                                                          |
@@ -79,6 +91,16 @@ directory if needed, and writes the next number. If `path/to/file0004.wav`
 exists, `-e LINEAR16 --out path/to/file` writes `path/to/file0005.wav`. Known
 audio extensions on `--out` are stripped, so `--out speech.wav` still uses the
 stem `speech`.
+
+Each text item is checked before the browser opens: `input.text[]` items must be
+at most 4,000 UTF-8 bytes, `input.prompt` at most 4,000 UTF-8 bytes, and text
+plus prompt at most 8,000 UTF-8 bytes.
+
+If a batch stops after writing some files, resume from the next item:
+
+```bash
+gemgen tts -i request.json -o speech --start-at 4
+```
 
 ## JSON Template
 
@@ -98,11 +120,11 @@ calm soothing narration prompt.
       "Paste the first narration segment here.",
       "Paste the next narration segment here."
     ],
-    "prompt": "Calm, soothing narration ideal for falling asleep videos. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses."
+    "prompt": "Calm, soothing narration. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses."
   },
   "voice": {
     "languageCode": "en-US",
-    "name": "Achernar",
+    "name": "Umbriel",
     "modelName": "gemini-3.1-flash-tts-preview"
   },
   "audioConfig": {
@@ -139,7 +161,6 @@ gemgen tts --speaker Sam=Kore --speaker Bob=Charon --turn "Sam:Did you hear that
 gemgen tts --speaker Host=Achernar --speaker Guest=Puck --turn "Host:Welcome back." --turn "Guest:Good to be here." -p "Two-speaker dialogue, relaxed interview." -o interview
 gemgen tts --json-template > request.json
 gemgen tts -i request.json -o batch
-gemgen tts --input-json '{"input":{"text":["Hello [short pause] again."],"prompt":"Gentle assistant."},"voice":{"name":"Aoede","languageCode":"en-US"},"audioConfig":{"audioEncoding":"MP3"}}' -o hello
 gemgen tts -t "Support is available now." --profile telephony-class-application -e MULAW -o phone
 ```
 
