@@ -15,6 +15,7 @@ export type { SequencedOutputPath } from "./lib/output.ts";
 export {
   AUDIO_PROFILES,
   buildSynthesizeRequest,
+  buildSynthesizeRequests,
   createTtsJsonTemplate,
   decodeAudioContent,
   ENCODINGS,
@@ -40,9 +41,12 @@ export type {
   ResolvedTtsOptions,
   SpeakerMapping,
   TtsFlagOverrides,
-  TtsJsonTemplateKind,
   TtsOptions,
+  TtsOutputResult,
   TtsRunResult,
   Turn,
 } from "./lib/tts.ts";
-export { synthesizeWithBrowser } from "./lib/browser.ts";
+export {
+  randomInterCallDelayMs,
+  synthesizeWithBrowser,
+} from "./lib/browser.ts";

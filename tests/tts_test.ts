@@ -1,5 +1,6 @@
 import {
   buildSynthesizeRequest,
+  buildSynthesizeRequests,
   createTtsJsonTemplate,
   extensionForEncoding,
   GEMINI_TTS_MODEL,
@@ -7,6 +8,7 @@ import {
   parseSpeakerMapping,
   parseTurn,
   parseTurnsJson,
+  randomInterCallDelayMs,
   resolveSequencedOutputPath,
   resolveTtsOptions,
   writeSequencedOutput,
@@ -41,23 +43,58 @@ function assertThrows(fn: () => unknown, includes: string): void {
   throw new Error(`Expected function to throw "${includes}".`);
 }
 
-Deno.test("parses compact JSON input", () => {
-  const options = parseCompactOrFullJson(JSON.stringify({
-    text: "Hello",
-    prompt: "Read warmly.",
-    voice: "Kore",
-    language: "en-US",
-    encoding: "mp3",
-    profiles: ["telephony-class-application"],
-    out: "speech.mp3",
-  }));
-
-  assertEquals(options.text, "Hello");
-  assertEquals(options.encoding, "MP3");
-  assertEquals(options.profiles, ["telephony-class-application"]);
+Deno.test("rejects compact JSON input", () => {
+  assertThrows(
+    () =>
+      parseCompactOrFullJson(JSON.stringify({
+        text: "Hello",
+        prompt: "Read warmly.",
+        voice: "Kore",
+        encoding: "mp3",
+      })),
+    "full request object",
+  );
 });
 
-Deno.test("parses full request JSON input", () => {
+Deno.test("rejects output paths in JSON input", () => {
+  assertThrows(
+    () =>
+      parseCompactOrFullJson(JSON.stringify({
+        input: { text: ["Hello"] },
+        out: "speech",
+      })),
+    "Output path must be passed with -o, --out",
+  );
+});
+
+Deno.test("parses full request JSON text array", () => {
+  const options = parseCompactOrFullJson(JSON.stringify({
+    input: {
+      text: ["Hello.", "Again."],
+      prompt: "Read warmly.",
+    },
+    voice: {
+      languageCode: "en-US",
+      name: "Kore",
+      modelName: "wrong-model",
+    },
+    audioConfig: {
+      audioEncoding: "mp3",
+      speakingRate: 1.1,
+      pitch: 2,
+      volumeGainDb: 1,
+      sampleRateHertz: 24000,
+      effectsProfileId: ["handset-class-device"],
+    },
+  }));
+
+  assertEquals(options.texts, ["Hello.", "Again."]);
+  assertEquals(options.encoding, "MP3");
+  assertEquals(options.profiles, ["handset-class-device"]);
+  assertEquals(options.sampleRateHertz, 24000);
+});
+
+Deno.test("parses full request JSON structured turns", () => {
   const options = parseCompactOrFullJson(JSON.stringify({
     input: {
       prompt: "Conversation.",
@@ -67,80 +104,127 @@ Deno.test("parses full request JSON input", () => {
     },
     voice: {
       languageCode: "en-US",
-      modelName: "wrong-model",
       multiSpeakerVoiceConfig: {
         speakerVoiceConfigs: [{ speakerAlias: "Sam", speakerId: "Kore" }],
       },
     },
     audioConfig: {
       audioEncoding: "LINEAR16",
-      speakingRate: 1.1,
-      pitch: 2,
-      volumeGainDb: 1,
-      sampleRateHertz: 24000,
-      effectsProfileId: ["handset-class-device"],
     },
-    out: "dialogue.wav",
   }));
 
   assertEquals(options.turns, [{ speaker: "Sam", text: "Hi." }]);
   assertEquals(options.speakers, [{ alias: "Sam", voice: "Kore" }]);
-  assertEquals(options.sampleRateHertz, 24000);
 });
 
-Deno.test("creates valid compact JSON template", () => {
-  const template = createTtsJsonTemplate("compact");
+Deno.test("validates JSON text arrays", () => {
+  assertThrows(
+    () =>
+      parseCompactOrFullJson(JSON.stringify({
+        input: { text: "Hello" },
+      })),
+    "input.text must be an array of strings",
+  );
+  assertThrows(
+    () =>
+      parseCompactOrFullJson(JSON.stringify({
+        input: { text: [] },
+      })),
+    "input.text must include at least one text item",
+  );
+  assertThrows(
+    () =>
+      parseCompactOrFullJson(JSON.stringify({
+        input: { text: ["Hello", 1] },
+      })),
+    "input.text[1] must be a string",
+  );
+});
+
+Deno.test("creates valid full JSON template without out", () => {
+  const template = createTtsJsonTemplate();
+  assert(Array.isArray(template.input?.text));
+  assert(!("out" in template));
+
   const options = resolveTtsOptions(
     parseCompactOrFullJson(JSON.stringify(template)),
+    { out: "speech" },
   );
 
-  assertEquals(options.text, "Hello from gemgen.");
+  assertEquals(options.texts[0], "Hello from gemgen.");
   assertEquals(options.voice, "Achernar");
   assertEquals(options.out, "speech");
 });
 
-Deno.test("creates valid full JSON template", () => {
-  const template = createTtsJsonTemplate("full");
-  const request = buildSynthesizeRequest(
-    resolveTtsOptions(parseCompactOrFullJson(JSON.stringify(template))),
-  );
-
-  assertEquals(request.voice.modelName, GEMINI_TTS_MODEL);
-  assertEquals(request.audioConfig.audioEncoding, "LINEAR16");
-});
-
 Deno.test("granular flags override JSON fields", () => {
   const jsonOptions = parseCompactOrFullJson(JSON.stringify({
-    text: "From JSON",
-    voice: "Kore",
-    encoding: "MP3",
-    out: "json.mp3",
+    input: { text: ["From JSON 1", "From JSON 2"] },
+    voice: { name: "Kore" },
+    audioConfig: { audioEncoding: "MP3" },
   }));
   const resolved = resolveTtsOptions(jsonOptions, {
     text: "From flag",
     voice: "Achernar",
     encoding: "LINEAR16",
-    out: "flag.wav",
+    out: "flag",
   });
 
-  assertEquals(resolved.text, "From flag");
+  assertEquals(resolved.texts, ["From flag"]);
   assertEquals(resolved.voice, "Achernar");
   assertEquals(resolved.encoding, "LINEAR16");
-  assertEquals(resolved.out, "flag.wav");
+  assertEquals(resolved.out, "flag");
+});
+
+Deno.test("CLI text overrides JSON dialogue fields", () => {
+  const jsonOptions = parseCompactOrFullJson(JSON.stringify({
+    input: {
+      multiSpeakerMarkup: {
+        turns: [{ speaker: "Sam", text: "Hi." }],
+      },
+    },
+    voice: {
+      multiSpeakerVoiceConfig: {
+        speakerVoiceConfigs: [{ speakerAlias: "Sam", speakerId: "Kore" }],
+      },
+    },
+  }));
+  const resolved = resolveTtsOptions(jsonOptions, {
+    text: "From flag",
+    out: "speech",
+  });
+
+  assertEquals(resolved.texts, ["From flag"]);
+  assertEquals(resolved.turns, []);
+  assertEquals(resolved.speakers, []);
+});
+
+Deno.test("CLI turns override JSON text fields", () => {
+  const jsonOptions = parseCompactOrFullJson(JSON.stringify({
+    input: { text: ["From JSON"] },
+  }));
+  const resolved = resolveTtsOptions(jsonOptions, {
+    speakers: [parseSpeakerMapping("Sam=Kore")],
+    turns: [parseTurn("Sam:From flag")],
+    out: "speech",
+  });
+
+  assertEquals(resolved.texts, []);
+  assertEquals(resolved.turns, [{ speaker: "Sam", text: "From flag" }]);
 });
 
 Deno.test("forces Gemini 3.1 model", () => {
   const jsonOptions = parseCompactOrFullJson(JSON.stringify({
-    input: { text: "Hello" },
+    input: { text: ["Hello"] },
     voice: {
       languageCode: "en-US",
       name: "Kore",
       modelName: "gemini-2.5-pro-tts",
     },
     audioConfig: { audioEncoding: "MP3" },
-    out: "speech.mp3",
   }));
-  const request = buildSynthesizeRequest(resolveTtsOptions(jsonOptions));
+  const request = buildSynthesizeRequest(
+    resolveTtsOptions(jsonOptions, { out: "speech" }),
+  );
 
   assertEquals(request.voice.modelName, GEMINI_TTS_MODEL);
   assert(!("model_name" in request.voice));
@@ -148,7 +232,7 @@ Deno.test("forces Gemini 3.1 model", () => {
 
 Deno.test("validates enum values", () => {
   assertThrows(
-    () => resolveTtsOptions({}, { text: "x", voice: "Nope", out: "x.wav" }),
+    () => resolveTtsOptions({}, { text: "x", voice: "Nope", out: "x" }),
     "Invalid voice",
   );
   assertThrows(
@@ -156,7 +240,7 @@ Deno.test("validates enum values", () => {
       resolveTtsOptions({}, {
         text: "x",
         encoding: "BAD" as never,
-        out: "x.wav",
+        out: "x",
       }),
     "Invalid encoding",
   );
@@ -165,7 +249,7 @@ Deno.test("validates enum values", () => {
       resolveTtsOptions({}, {
         text: "x",
         profiles: ["bad-profile"],
-        out: "x.wav",
+        out: "x",
       }),
     "Invalid audio profile",
   );
@@ -173,15 +257,15 @@ Deno.test("validates enum values", () => {
 
 Deno.test("validates numeric ranges", () => {
   assertThrows(
-    () => resolveTtsOptions({}, { text: "x", speakingRate: 2.1, out: "x.wav" }),
+    () => resolveTtsOptions({}, { text: "x", speakingRate: 2.1, out: "x" }),
     "speaking-rate",
   );
   assertThrows(
-    () => resolveTtsOptions({}, { text: "x", pitch: -21, out: "x.wav" }),
+    () => resolveTtsOptions({}, { text: "x", pitch: -21, out: "x" }),
     "pitch",
   );
   assertThrows(
-    () => resolveTtsOptions({}, { text: "x", volumeGainDb: 17, out: "x.wav" }),
+    () => resolveTtsOptions({}, { text: "x", volumeGainDb: 17, out: "x" }),
     "volume-gain-db",
   );
 });
@@ -192,7 +276,7 @@ Deno.test("validates speaker aliases", () => {
       resolveTtsOptions({}, {
         turns: [{ speaker: "Bad Alias", text: "Hi" }],
         speakers: [{ alias: "Bad Alias", voice: "Kore" }],
-        out: "x.wav",
+        out: "x",
       }),
     "alphanumeric",
   );
@@ -230,7 +314,7 @@ Deno.test("builds structured turns request", () => {
       parseSpeakerMapping("Bob=Charon"),
     ],
     turns: [parseTurn("Sam:Hi Bob."), parseTurn("Bob:Hi Sam.")],
-    out: "dialogue.wav",
+    out: "dialogue",
   }));
 
   assertEquals(request.input.multiSpeakerMarkup?.turns, [
@@ -247,13 +331,43 @@ Deno.test("preserves repeated profiles in order", () => {
   const request = buildSynthesizeRequest(resolveTtsOptions({}, {
     text: "Hello",
     profiles: ["handset-class-device", "telephony-class-application"],
-    out: "speech.wav",
+    out: "speech",
   }));
 
   assertEquals(request.audioConfig.effectsProfileId, [
     "handset-class-device",
     "telephony-class-application",
   ]);
+});
+
+Deno.test("builds one synthesis request per text item", () => {
+  const options = resolveTtsOptions({}, {
+    texts: ["First", "Second"],
+    prompt: "Warm.",
+    out: "speech",
+  });
+  const requests = buildSynthesizeRequests(options);
+
+  assertEquals(requests.length, 2);
+  assertEquals(requests[0].input.text, "First");
+  assertEquals(requests[1].input.text, "Second");
+  assertEquals(requests[1].input.prompt, "Warm.");
+});
+
+Deno.test("builds a synthesis request with a text override", () => {
+  const request = buildSynthesizeRequest(
+    resolveTtsOptions({}, { texts: ["First"], out: "speech" }),
+    "Override",
+  );
+
+  assertEquals(request.input.text, "Override");
+});
+
+Deno.test("random inter-call delay is between five and ten seconds", () => {
+  assertEquals(randomInterCallDelayMs(() => 0), 5_000);
+  assertEquals(randomInterCallDelayMs(() => 1), 10_000);
+  assert(randomInterCallDelayMs(() => 0.5) >= 5_000);
+  assert(randomInterCallDelayMs(() => 0.5) <= 10_000);
 });
 
 Deno.test("maps encodings to output extensions", () => {

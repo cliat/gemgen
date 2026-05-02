@@ -14,12 +14,9 @@ coverage/
 *.mulaw
 
 # Browser automation artifacts
-.agents/
-.claude/
 .playwright-cli/
 playwright-report/
 test-results/
-skills-lock.json
 storage-state*.json
 session*.json
 

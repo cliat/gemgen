@@ -1,9 +1,10 @@
 import {
-  buildSynthesizeRequest,
+  buildSynthesizeRequests,
   decodeAudioContent,
   GEMINI_TTS_MODEL,
   type Logger,
   type ResolvedTtsOptions,
+  type TtsOutputResult,
   type TtsRunResult,
 } from "./tts.ts";
 import { writeSequencedOutput } from "./output.ts";
@@ -15,6 +16,10 @@ const SYNTHESIZE_URL =
   "https://texttospeech.googleapis.com/v1beta1/text:synthesize";
 const PLAYWRIGHT_PACKAGE = "npm:playwright@1.52.0";
 const PROXY_TIMEOUT_MS = 120_000;
+
+export function randomInterCallDelayMs(random = Math.random): number {
+  return Math.min(10_000, Math.floor(5_000 + random() * 5_001));
+}
 
 type DemoFrame = {
   evaluate: <T>(
@@ -56,7 +61,8 @@ export async function synthesizeWithBrowser(
   options: ResolvedTtsOptions,
   log: Logger = () => {},
 ): Promise<TtsRunResult> {
-  const request = buildSynthesizeRequest(options);
+  const requests = buildSynthesizeRequests(options);
+  const outputs: TtsOutputResult[] = [];
   let browser: Browser | undefined;
 
   try {
@@ -75,26 +81,60 @@ export async function synthesizeWithBrowser(
     await acceptCookies(page);
 
     const frame = await findDemoFrame(page, log);
-    await prepareDemoFrame(frame, request, options);
 
-    const response = await submitWithCaptchaIfNeeded(frame, request, log);
-    if (!response.audioContent || typeof response.audioContent !== "string") {
-      throw new Error("Text-to-Speech response did not include audioContent.");
+    for (const [index, request] of requests.entries()) {
+      if (requests.length > 1) {
+        log(`Preparing synthesis request ${index + 1}/${requests.length}.`);
+      }
+      await prepareDemoFrame(frame, request, options);
+
+      const response = await submitWithCaptchaIfNeeded(frame, request, log);
+      if (!response.audioContent || typeof response.audioContent !== "string") {
+        throw new Error(
+          "Text-to-Speech response did not include audioContent.",
+        );
+      }
+
+      const audio = decodeAudioContent(response.audioContent);
+      const output = await writeSequencedOutput(
+        options.out,
+        options.encoding,
+        audio,
+      );
+
+      outputs.push({
+        out: output.path,
+        bytes: audio.byteLength,
+        index: index + 1,
+        text: options.turns.length === 0 ? options.texts[index] : undefined,
+        voice: options.speakers.length === 0 ? options.voice : undefined,
+        language: options.language,
+        encoding: options.encoding,
+        profiles: options.profiles,
+        speakers: options.speakers,
+        turns: options.turns.length,
+      });
+
+      if (index < requests.length - 1) {
+        const delay = randomInterCallDelayMs();
+        log(
+          `Waiting ${
+            (delay / 1000).toFixed(1)
+          }s before the next synthesis request.`,
+        );
+        await page.waitForTimeout(delay);
+      }
     }
 
-    const audio = decodeAudioContent(response.audioContent);
-    const output = await writeSequencedOutput(
-      options.out,
-      options.encoding,
-      audio,
-    );
+    const firstOutput = outputs[0];
 
     return {
       ok: true,
       command: "tts",
       modelName: GEMINI_TTS_MODEL,
-      out: output.path,
-      bytes: audio.byteLength,
+      outputs,
+      out: firstOutput?.out,
+      bytes: firstOutput?.bytes,
       voice: options.speakers.length === 0 ? options.voice : undefined,
       language: options.language,
       encoding: options.encoding,

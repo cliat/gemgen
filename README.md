@@ -32,44 +32,47 @@ gemgen tts --text "Hello" --out speech
 gemgen --json tts -t "Hello" -p "Read warmly." -v Achernar -l en-US -e LINEAR16 -o output
 deno x -A jsr:@cliat/gemgen/cli --json tts -t "Hello" -o output
 gemgen tts --json-template > request.json
-gemgen tts --json-template full > full-request.json
+gemgen tts -i request.json -o speech
 deno run -A cli.ts tts --help
 ```
 
-`--json` prints only the success object to stdout. Progress, CAPTCHA
-instructions, and errors go to stderr. `out` is the actual file written, for
-example `output0001.wav`.
+`--json` prints one stable success object to stdout. Progress, CAPTCHA
+instructions, and errors go to stderr. `outputs[]` lists every file written.
 
 ## Options And JSON
 
-Granular flags override JSON fields. JSON input overrides defaults.
-`voice.modelName` is always forced to `gemini-3.1-flash-tts-preview`.
+Granular flags override JSON fields. JSON input overrides defaults. `--out` is
+CLI-only and is never read from JSON. `input.text` is an array in JSON; each
+string is submitted as a separate service call with the same settings. `--text`
+accepts one string and overrides JSON text. gemgen waits 5-10 seconds before
+each next service call.
 
-| Flag                            | Compact JSON                              | Full JSON field                                       | Default    | Notes                                                           |
-| ------------------------------- | ----------------------------------------- | ----------------------------------------------------- | ---------- | --------------------------------------------------------------- |
-| `-t, --text <text>`             | `text`                                    | `input.text`                                          | none       | Text to synthesize. Cannot be combined with structured turns.   |
-| `-p, --prompt <text>`           | `prompt`                                  | `input.prompt`                                        | none       | Style instructions.                                             |
-| `-v, --voice <name>`            | `voice`                                   | `voice.name`                                          | `Achernar` | Single-speaker voice.                                           |
-| `-l, --language <code>`         | `language`, `languageCode`                | `voice.languageCode`                                  | `en-US`    | BCP-47 code.                                                    |
-| `-e, --encoding <value>`        | `encoding`, `audioEncoding`               | `audioConfig.audioEncoding`                           | `LINEAR16` | `LINEAR16`, `ALAW`, `MULAW`, `MP3`, `OGG_OPUS`, `PCM`.          |
-| `-r, --speaking-rate <number>`  | `speakingRate`                            | `audioConfig.speakingRate`                            | `1`        | Range `0.25..2.0`.                                              |
-| `-P, --pitch <number>`          | `pitch`                                   | `audioConfig.pitch`                                   | `0`        | Range `-20..20`.                                                |
-| `-g, --volume-gain-db <number>` | `volumeGainDb`                            | `audioConfig.volumeGainDb`                            | `0`        | Range `-96..16`.                                                |
-| `-s, --sample-rate <hz>`        | `sampleRate`, `sampleRateHertz`           | `audioConfig.sampleRateHertz`                         | omitted    | Positive integer hertz.                                         |
-| `--profile <id>`                | `profile`, `profiles`, `effectsProfileId` | `audioConfig.effectsProfileId[]`                      | `[]`       | Repeatable; applied in order.                                   |
-| `--speaker <alias=voice>`       | `speaker`, `speakers`                     | `voice.multiSpeakerVoiceConfig.speakerVoiceConfigs[]` | `[]`       | Repeatable; alias must be alphanumeric.                         |
-| `--turn <alias:text>`           | `turns[]`                                 | `input.multiSpeakerMarkup.turns[]`                    | `[]`       | Repeatable structured dialogue turn.                            |
-| `--turns-file <path>`           | n/a                                       | n/a                                                   | omitted    | JSON array of `{ "speaker": "...", "text": "..." }`.            |
-| `-i, --input-file <path>`       | compact object                            | full request object                                   | omitted    | Reads compact or full JSON.                                     |
-| `--input-json <json>`           | compact object                            | full request object                                   | omitted    | Inline compact or full JSON.                                    |
-| `--json-template [compact       | full]`                                    | n/a                                                   | n/a        | omitted                                                         |
-| `-o, --out <path>`              | `out`                                     | `out`                                                 | required   | Output stem. Creates parent dirs and writes next numbered file. |
-| `--json`                        | n/a                                       | n/a                                                   | false      | Stable JSON success output.                                     |
+| Flag                            | JSON field                                            | Default    | Notes                                                                                                |
+| ------------------------------- | ----------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
+| `-t, --text <text>`             | `input.text[]`                                        | none       | CLI accepts one string. JSON accepts a non-empty string array. Cannot combine with structured turns. |
+| `-p, --prompt <text>`           | `input.prompt`                                        | omitted    | Style instructions.                                                                                  |
+| `-v, --voice <name>`            | `voice.name`                                          | `Achernar` | Single-speaker Gemini voice.                                                                         |
+| `-l, --language <code>`         | `voice.languageCode`                                  | `en-US`    | BCP-47 language code.                                                                                |
+| n/a                             | `voice.modelName`                                     | forced     | Always sent as `gemini-3.1-flash-tts-preview`. JSON values are ignored.                              |
+| `-e, --encoding <value>`        | `audioConfig.audioEncoding`                           | `LINEAR16` | `LINEAR16`, `ALAW`, `MULAW`, `MP3`, `OGG_OPUS`, `PCM`.                                               |
+| `-r, --speaking-rate <number>`  | `audioConfig.speakingRate`                            | `1`        | Range `0.25..2.0`.                                                                                   |
+| `-P, --pitch <number>`          | `audioConfig.pitch`                                   | `0`        | Range `-20..20`.                                                                                     |
+| `-g, --volume-gain-db <number>` | `audioConfig.volumeGainDb`                            | `0`        | Range `-96..16`.                                                                                     |
+| `-s, --sample-rate <hz>`        | `audioConfig.sampleRateHertz`                         | omitted    | Positive integer hertz.                                                                              |
+| `--profile <id>`                | `audioConfig.effectsProfileId[]`                      | `[]`       | Repeatable; applied in order.                                                                        |
+| `--speaker <alias=voice>`       | `voice.multiSpeakerVoiceConfig.speakerVoiceConfigs[]` | `[]`       | Repeatable; alias must be alphanumeric. JSON uses `{ "speakerAlias": "...", "speakerId": "..." }`.   |
+| `--turn <alias:text>`           | `input.multiSpeakerMarkup.turns[]`                    | `[]`       | Repeatable structured dialogue turn. JSON uses `{ "speaker": "...", "text": "..." }`.                |
+| `--turns-file <path>`           | n/a                                                   | omitted    | JSON array of `{ "speaker": "...", "text": "..." }`; replaces repeated `--turn` values.              |
+| `-i, --input-file <path>`       | full request object                                   | omitted    | Reads JSON shaped like `--json-template`.                                                            |
+| `--input-json <json>`           | full request object                                   | omitted    | Inline full JSON.                                                                                    |
+| `--json-template`               | n/a                                                   | n/a        | Prints a full JSON template/example and exits.                                                       |
+| `-o, --out <path>`              | n/a                                                   | required   | Output stem. Creates parent dirs and writes the next numbered file.                                  |
+| `--json`                        | n/a                                                   | false      | Stable JSON success output.                                                                          |
 
 `--profile` maps to `audioConfig.effectsProfileId`. `--speaker Sam=Kore` maps
 alias `Sam` to Gemini voice `Kore`. `--turn Sam:Hello` appends
-`{ "speaker": "Sam", "text": "Hello" }`. `--turns-file turns.json` replaces
-repeated `--turn` values with a JSON array.
+`{ "speaker": "Sam", "text": "Hello" }`. `--turns-file turns.json` reads the
+same array shape used by `input.multiSpeakerMarkup.turns`.
 
 `--out path/to/file` scans for `path/to/fileNNNN.<ext>`, creates the parent
 directory if needed, and writes the next number. If `path/to/file0004.wav`
@@ -77,21 +80,65 @@ exists, `-e LINEAR16 --out path/to/file` writes `path/to/file0005.wav`. Known
 audio extensions on `--out` are stripped, so `--out speech.wav` still uses the
 stem `speech`.
 
-`--json-template` prints a compact JSON example. `--json-template full` prints
-the full request-shaped example. Edit the output and pass it back with
-`--input-file`.
+## JSON Template
+
+```bash
+gemgen tts --json-template > request.json
+gemgen tts -i request.json -o speech
+```
+
+Template JSON has no output path:
+
+```json
+{
+  "input": {
+    "text": [
+      "Hello from gemgen.",
+      "This second item will be generated as the next numbered audio file."
+    ],
+    "prompt": "Read warmly."
+  },
+  "voice": {
+    "languageCode": "en-US",
+    "name": "Achernar",
+    "modelName": "gemini-3.1-flash-tts-preview"
+  },
+  "audioConfig": {
+    "audioEncoding": "LINEAR16",
+    "speakingRate": 1,
+    "pitch": 0,
+    "volumeGainDb": 0,
+    "sampleRateHertz": 24000,
+    "effectsProfileId": ["small-bluetooth-speaker-class-device"]
+  }
+}
+```
+
+`--json` output:
+
+```json
+{
+  "ok": true,
+  "command": "tts",
+  "modelName": "gemini-3.1-flash-tts-preview",
+  "outputs": [
+    { "out": "speech0001.wav", "bytes": 12345, "index": 1 }
+  ]
+}
+```
 
 ## Examples
 
 ```bash
-gemgen tts -t "Welcome aboard." -p "Read in a warm narration voice." -v Achernar -o warm
-gemgen tts -t "The glacier moved a few inches each day." -p "Calm documentary narrator." -v Charon -e MP3 -o doc
-gemgen tts -t "[whispering] The door is open." -p "Whisper a warning." -v Kore -o warning
+gemgen tts -t "Welcome aboard." -p "Warm narration with a gentle smile." -v Achernar -o warm
+gemgen tts -t "The glacier moved a few inches each day." -p "Calm documentary voice." -v Charon -e MP3 -o doc
+gemgen tts -t "[whispering] The door is open." -p "Whispered warning." -v Kore -o warning
 gemgen tts -t "[extremely fast] Terms apply. See store for details." -p "Fast disclaimer." -r 1.8 -o disclaimer
-gemgen tts --speaker Sam=Kore --speaker Bob=Charon --turn "Sam:Did you hear that?" --turn "Bob:[laughing] I did." -p "Amused conversation." -o chat
+gemgen tts --speaker Sam=Kore --speaker Bob=Charon --turn "Sam:Did you hear that?" --turn "Bob:[laughing] I did." -p "Amused conversation between two friends." -o chat
+gemgen tts --speaker Host=Achernar --speaker Guest=Puck --turn "Host:Welcome back." --turn "Guest:Good to be here." -p "Two-speaker dialogue, relaxed interview." -o interview
 gemgen tts --json-template > request.json
-gemgen tts -i request.json
-gemgen tts --input-json '{"text":"Hello [short pause] again.","prompt":"Gentle assistant.","audioEncoding":"MP3","out":"hello"}'
+gemgen tts -i request.json -o batch
+gemgen tts --input-json '{"input":{"text":["Hello [short pause] again."],"prompt":"Gentle assistant."},"voice":{"name":"Aoede","languageCode":"en-US"},"audioConfig":{"audioEncoding":"MP3"}}' -o hello
 gemgen tts -t "Support is available now." --profile telephony-class-application -e MULAW -o phone
 ```
 

@@ -54,9 +54,9 @@ Options:
   --speaker <alias=voice>           Repeatable multi-speaker voice mapping.
   --turn <alias:text>               Repeatable structured dialogue turn.
   --turns-file <path>               JSON array of { "speaker": "...", "text": "..." }.
-  -i, --input-file <path>           Compact or full JSON input.
-  --input-json <json>               Compact or full JSON input.
-  --json-template [compact|full]    Print a JSON template/example and exit.
+  -i, --input-file <path>           Full JSON input. input.text is an array.
+  --input-json <json>               Full JSON input. input.text is an array.
+  --json-template                   Print a full JSON template/example and exit.
   -o, --out <path>                  Required output stem. Writes <path>0001.<ext>, then next sequence.
   --json                            Emit stable JSON to stdout.
   -h, --help                        Show help.
@@ -74,7 +74,7 @@ type ParsedTtsArgs = {
   jsonOptions?: TtsFlagOverrides;
   flagOptions: TtsFlagOverrides;
   json: boolean;
-  jsonTemplate?: "compact" | "full";
+  jsonTemplate?: boolean;
 };
 
 export async function runCli(args: string[] = Deno.args): Promise<void> {
@@ -105,7 +105,7 @@ export async function runCli(args: string[] = Deno.args): Promise<void> {
     const ttsArgs = await parseTtsArgs(parsed.commandArgs, parsed.json);
     if (ttsArgs.jsonTemplate) {
       console.log(
-        JSON.stringify(createTtsJsonTemplate(ttsArgs.jsonTemplate), null, 2),
+        JSON.stringify(createTtsJsonTemplate(), null, 2),
       );
       return;
     }
@@ -117,8 +117,13 @@ export async function runCli(args: string[] = Deno.args): Promise<void> {
 
     if (ttsArgs.json) {
       console.log(JSON.stringify(result, null, 2));
+    } else if (result.outputs.length > 1) {
+      for (const output of result.outputs) {
+        console.log(`Wrote ${output.out} (${output.bytes} bytes)`);
+      }
     } else {
-      console.log(`Wrote ${result.out} (${result.bytes} bytes)`);
+      const output = result.outputs[0];
+      console.log(`Wrote ${output.out} (${output.bytes} bytes)`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -174,7 +179,7 @@ async function parseTtsArgs(
   const speakers = [];
   const turns = [];
   let turnsFile: string | undefined;
-  let jsonTemplate: "compact" | "full" | undefined;
+  let jsonTemplate = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -267,9 +272,14 @@ async function parseTtsArgs(
         if (inlineValue !== undefined) index -= 1;
         break;
       case "--json-template": {
-        const template = readOptionalTemplateKind(args, index, inlineValue);
-        jsonTemplate = template.kind;
-        index = template.nextIndex;
+        if (inlineValue !== undefined) {
+          throw new Error("--json-template does not take a value.");
+        }
+        const nextArg = args[index + 1];
+        if (nextArg !== undefined && !nextArg.startsWith("-")) {
+          throw new Error("--json-template does not take a value.");
+        }
+        jsonTemplate = true;
         break;
       }
       case "-o":
@@ -333,27 +343,6 @@ function readNumber(
     throw new Error(`${name} requires a finite number.`);
   }
   return number;
-}
-
-function readOptionalTemplateKind(
-  args: string[],
-  index: number,
-  inlineValue?: string,
-): { kind: "compact" | "full"; nextIndex: number } {
-  const rawValue = inlineValue ?? args[index + 1];
-  if (rawValue === "compact" || rawValue === "full") {
-    return {
-      kind: rawValue,
-      nextIndex: inlineValue === undefined ? index + 1 : index,
-    };
-  }
-  if (inlineValue !== undefined) {
-    throw new Error("--json-template must be compact or full.");
-  }
-  if (rawValue !== undefined && !rawValue.startsWith("-")) {
-    throw new Error("--json-template must be compact or full.");
-  }
-  return { kind: "compact", nextIndex: index };
 }
 
 if (import.meta.main) {

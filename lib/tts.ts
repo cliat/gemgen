@@ -173,7 +173,7 @@ export type SpeakerMapping = {
 };
 
 export type TtsOptions = {
-  text?: string;
+  texts: string[];
   prompt?: string;
   voice: string;
   language: string;
@@ -189,8 +189,10 @@ export type TtsOptions = {
 };
 
 export type TtsFlagOverrides =
-  & Partial<Omit<TtsOptions, "profiles" | "speakers" | "turns">>
+  & Partial<Omit<TtsOptions, "profiles" | "speakers" | "turns" | "texts">>
   & {
+    text?: string;
+    texts?: string[];
     profiles?: string[];
     speakers?: SpeakerMapping[];
     turns?: Turn[];
@@ -203,7 +205,7 @@ export type ResolvedTtsOptions = Omit<TtsOptions, "out"> & {
 
 export type FullSynthesizeRequest = {
   input?: {
-    text?: string;
+    text?: string[];
     ssml?: string;
     prompt?: string;
     multiSpeakerMarkup?: {
@@ -230,7 +232,6 @@ export type FullSynthesizeRequest = {
     sampleRateHertz?: number;
     effectsProfileId?: string[];
   };
-  out?: string;
 };
 
 export type CompactJsonInput = Partial<{
@@ -262,16 +263,28 @@ export type CompactJsonInput = Partial<{
 
 export type JsonInput = CompactJsonInput | FullSynthesizeRequest;
 
-export type TtsJsonTemplateKind = "compact" | "full";
-
 export type Logger = (message: string) => void;
+
+export type TtsOutputResult = {
+  out: string;
+  bytes: number;
+  index: number;
+  text?: string;
+  voice?: string;
+  language: string;
+  encoding: AudioEncoding;
+  profiles: string[];
+  speakers: SpeakerMapping[];
+  turns: number;
+};
 
 export type TtsRunResult = {
   ok: true;
   command: "tts";
   modelName: typeof GEMINI_TTS_MODEL;
-  out: string;
-  bytes: number;
+  outputs: TtsOutputResult[];
+  out?: string;
+  bytes?: number;
   voice?: string;
   language: string;
   encoding: AudioEncoding;
@@ -310,6 +323,7 @@ type SynthesizeRequest = {
 };
 
 const DEFAULT_OPTIONS: TtsOptions = {
+  texts: [],
   voice: "Achernar",
   language: "en-US",
   encoding: "LINEAR16",
@@ -321,51 +335,29 @@ const DEFAULT_OPTIONS: TtsOptions = {
   turns: [],
 };
 
-export function createTtsJsonTemplate(
-  kind: TtsJsonTemplateKind = "compact",
-): CompactJsonInput | FullSynthesizeRequest {
-  if (kind === "compact") {
-    return {
-      text: "Hello from gemgen.",
+export function createTtsJsonTemplate(): FullSynthesizeRequest {
+  return {
+    input: {
+      text: [
+        "Hello from gemgen.",
+        "This second item will be generated as the next numbered audio file.",
+      ],
       prompt: "Read warmly.",
-      voice: "Achernar",
-      language: "en-US",
-      encoding: "LINEAR16",
+    },
+    voice: {
+      languageCode: "en-US",
+      name: "Achernar",
+      modelName: GEMINI_TTS_MODEL,
+    },
+    audioConfig: {
+      audioEncoding: "LINEAR16",
       speakingRate: 1,
       pitch: 0,
       volumeGainDb: 0,
       sampleRateHertz: 24000,
-      profiles: ["small-bluetooth-speaker-class-device"],
-      speakers: {},
-      turns: [],
-      out: "speech",
-    };
-  }
-
-  if (kind === "full") {
-    return {
-      input: {
-        text: "Hello from gemgen.",
-        prompt: "Read warmly.",
-      },
-      voice: {
-        languageCode: "en-US",
-        name: "Achernar",
-        modelName: GEMINI_TTS_MODEL,
-      },
-      audioConfig: {
-        audioEncoding: "LINEAR16",
-        speakingRate: 1,
-        pitch: 0,
-        volumeGainDb: 0,
-        sampleRateHertz: 24000,
-        effectsProfileId: ["small-bluetooth-speaker-class-device"],
-      },
-      out: "speech",
-    };
-  }
-
-  throw new Error(`Unknown JSON template kind "${kind}".`);
+      effectsProfileId: ["small-bluetooth-speaker-class-device"],
+    },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -398,6 +390,25 @@ function coerceStringArray(
     throw new Error(`${field} must be a string or string array.`);
   }
   return value;
+}
+
+function asTextArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array of strings.`);
+  }
+  if (value.length === 0) {
+    throw new Error(`${field} must include at least one text item.`);
+  }
+  return value.map((item, index) => {
+    if (typeof item !== "string") {
+      throw new Error(`${field}[${index}] must be a string.`);
+    }
+    if (item.trim() === "") {
+      throw new Error(`${field}[${index}] must be a non-empty string.`);
+    }
+    return item;
+  });
 }
 
 function uniqueListDescription(values: readonly string[]): string {
@@ -538,9 +549,15 @@ export function parseCompactOrFullJson(json: string): TtsFlagOverrides {
     throw new Error(`Invalid JSON input: ${message}`);
   }
   if (!isRecord(value)) throw new Error("JSON input must be an object.");
-  return isFullSynthesizeRequest(value)
-    ? normalizeFullJson(value)
-    : normalizeCompactJson(value);
+  if ("out" in value && value.out !== undefined) {
+    throw new Error("Output path must be passed with -o, --out, not JSON out.");
+  }
+  if (!isFullSynthesizeRequest(value)) {
+    throw new Error(
+      "JSON input must be a full request object. Generate one with gemgen tts --json-template.",
+    );
+  }
+  return normalizeFullJson(value);
 }
 
 export function isFullSynthesizeRequest(
@@ -586,14 +603,18 @@ function normalizeFullJson(value: Record<string, unknown>): TtsFlagOverrides {
     })
     : undefined;
 
-  const text = asString(input.text ?? input.ssml, "input.text");
+  if (input.ssml !== undefined) {
+    throw new Error("input.ssml is not supported; use input.text as an array.");
+  }
+
+  const texts = asTextArray(input.text, "input.text");
   const encoding = asString(
     audioConfig.audioEncoding,
     "audioConfig.audioEncoding",
   );
 
   return {
-    text,
+    texts,
     prompt: asString(input.prompt, "input.prompt"),
     voice: asString(voice.name, "voice.name"),
     language: asString(voice.languageCode, "voice.languageCode"),
@@ -620,40 +641,6 @@ function normalizeFullJson(value: Record<string, unknown>): TtsFlagOverrides {
       multiSpeakerMarkup.turns,
       "input.multiSpeakerMarkup.turns",
     ),
-    out: asString(value.out, "out"),
-  };
-}
-
-function normalizeCompactJson(
-  value: Record<string, unknown>,
-): TtsFlagOverrides {
-  const encoding = asString(value.encoding ?? value.audioEncoding, "encoding");
-  const profiles = coerceStringArray(
-    value.profiles ?? value.profile ?? value.effectsProfileId,
-    "profiles",
-  );
-  const speakers = normalizeSpeakerArray(
-    value.speakers ?? value.speaker,
-    "speakers",
-  );
-
-  return {
-    text: asString(value.text, "text"),
-    prompt: asString(value.prompt, "prompt"),
-    voice: asString(value.voice, "voice"),
-    language: asString(value.language ?? value.languageCode, "language"),
-    encoding: encoding ? normalizeEncoding(encoding) : undefined,
-    speakingRate: asNumber(value.speakingRate, "speakingRate"),
-    pitch: asNumber(value.pitch, "pitch"),
-    volumeGainDb: asNumber(value.volumeGainDb, "volumeGainDb"),
-    sampleRateHertz: asNumber(
-      value.sampleRateHertz ?? value.sampleRate,
-      "sampleRateHertz",
-    ),
-    profiles,
-    speakers,
-    turns: normalizeTurns(value.turns, "turns"),
-    out: asString(value.out, "out"),
   };
 }
 
@@ -663,10 +650,24 @@ export function mergeTtsOptions(
 ): TtsOptions {
   const definedJsonOptions = withoutUndefined(jsonOptions);
   const definedFlagOptions = withoutUndefined(flagOptions);
+  const jsonTexts = jsonOptions.text !== undefined
+    ? [jsonOptions.text]
+    : jsonOptions.texts;
+  const flagTexts = flagOptions.text !== undefined
+    ? [flagOptions.text]
+    : flagOptions.texts;
+  const hasFlagText = flagOptions.text !== undefined ||
+    flagOptions.texts !== undefined;
+  const hasFlagTurns = flagOptions.turns !== undefined;
   const merged: TtsOptions = {
     ...DEFAULT_OPTIONS,
     ...definedJsonOptions,
     ...definedFlagOptions,
+    texts: hasFlagText
+      ? flagTexts ?? DEFAULT_OPTIONS.texts
+      : hasFlagTurns
+      ? DEFAULT_OPTIONS.texts
+      : jsonTexts ?? DEFAULT_OPTIONS.texts,
     voice: normalizeVoiceName(
       flagOptions.voice ?? jsonOptions.voice ?? DEFAULT_OPTIONS.voice,
     ),
@@ -677,10 +678,15 @@ export function mergeTtsOptions(
       DEFAULT_OPTIONS.encoding,
     profiles: mergeArray(jsonOptions.profiles, flagOptions.profiles) ??
       DEFAULT_OPTIONS.profiles,
-    speakers: mergeArray(jsonOptions.speakers, flagOptions.speakers) ??
-      DEFAULT_OPTIONS.speakers,
-    turns: mergeArray(jsonOptions.turns, flagOptions.turns) ??
-      DEFAULT_OPTIONS.turns,
+    speakers: hasFlagText
+      ? flagOptions.speakers ?? DEFAULT_OPTIONS.speakers
+      : mergeArray(jsonOptions.speakers, flagOptions.speakers) ??
+        DEFAULT_OPTIONS.speakers,
+    turns: hasFlagText
+      ? DEFAULT_OPTIONS.turns
+      : hasFlagTurns
+      ? flagOptions.turns ?? DEFAULT_OPTIONS.turns
+      : jsonOptions.turns ?? DEFAULT_OPTIONS.turns,
   };
 
   validateTtsOptions(merged);
@@ -714,14 +720,20 @@ export function validateTtsOptions(options: TtsOptions): void {
     throw new Error("Missing required output path. Pass -o, --out <path>.");
   }
 
-  if (!options.text && options.turns.length === 0) {
+  if (options.texts.length === 0 && options.turns.length === 0) {
     throw new Error(
       "Missing text. Pass -t, --text, --turn, --turns-file, or JSON input.",
     );
   }
 
-  if (options.text && options.turns.length > 0) {
+  if (options.texts.length > 0 && options.turns.length > 0) {
     throw new Error("Use either text or structured turns, not both.");
+  }
+
+  for (const [index, text] of options.texts.entries()) {
+    if (typeof text !== "string" || text.trim() === "") {
+      throw new Error(`Text item ${index} must be a non-empty string.`);
+    }
   }
 
   if (!VOICES.some((voice) => voice === options.voice)) {
@@ -813,10 +825,11 @@ function validateSpeakerAlias(alias: string): void {
 
 export function buildSynthesizeRequest(
   options: ResolvedTtsOptions,
+  text?: string,
 ): SynthesizeRequest {
   const input: SynthesizeRequest["input"] = options.turns.length > 0
     ? { multiSpeakerMarkup: { turns: options.turns } }
-    : { text: options.text };
+    : { text: text ?? options.texts[0] };
 
   if (options.prompt) input.prompt = options.prompt;
 
@@ -852,6 +865,13 @@ export function buildSynthesizeRequest(
   }
 
   return { input, voice, audioConfig };
+}
+
+export function buildSynthesizeRequests(
+  options: ResolvedTtsOptions,
+): SynthesizeRequest[] {
+  if (options.turns.length > 0) return [buildSynthesizeRequest(options)];
+  return options.texts.map((text) => buildSynthesizeRequest(options, text));
 }
 
 export function decodeAudioContent(audioContent: string): Uint8Array {
