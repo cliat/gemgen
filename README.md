@@ -87,16 +87,18 @@ gemgen tts --json-template > request.json
 gemgen tts -i request.json -o speech
 ```
 
-Template JSON has no output path:
+Template JSON has no output path. Defaults target falling-asleep videos:
+uncompressed `LINEAR16`, 48 kHz, neutral audio with no device profile, and a
+calm soothing narration prompt.
 
 ```json
 {
   "input": {
     "text": [
-      "Hello from gemgen.",
-      "This second item will be generated as the next numbered audio file."
+      "Paste the first narration segment here.",
+      "Paste the next narration segment here."
     ],
-    "prompt": "Read warmly."
+    "prompt": "Calm, soothing narration. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses."
   },
   "voice": {
     "languageCode": "en-US",
@@ -108,8 +110,7 @@ Template JSON has no output path:
     "speakingRate": 1,
     "pitch": 0,
     "volumeGainDb": 0,
-    "sampleRateHertz": 24000,
-    "effectsProfileId": ["small-bluetooth-speaker-class-device"]
+    "sampleRateHertz": 48000
   }
 }
 ```

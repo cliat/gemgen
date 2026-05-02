@@ -151,7 +151,9 @@ Deno.test("creates valid full JSON template without out", () => {
     { out: "speech" },
   );
 
-  assertEquals(options.texts[0], "Hello from gemgen.");
+  assertEquals(options.texts[0], "Paste the first narration segment here.");
+  assertEquals(options.sampleRateHertz, 48000);
+  assertEquals(options.profiles, []);
   assertEquals(options.voice, "Achernar");
   assertEquals(options.out, "speech");
 });

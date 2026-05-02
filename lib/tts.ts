@@ -339,10 +339,11 @@ export function createTtsJsonTemplate(): FullSynthesizeRequest {
   return {
     input: {
       text: [
-        "Hello from gemgen.",
-        "This second item will be generated as the next numbered audio file.",
+        "Paste the first narration segment here.",
+        "Paste the next narration segment here.",
       ],
-      prompt: "Read warmly.",
+      prompt:
+        "Calm, soothing narration. Slow gentle pacing, soft warmth, relaxed clarity, and peaceful pauses.",
     },
     voice: {
       languageCode: "en-US",
@@ -354,8 +355,7 @@ export function createTtsJsonTemplate(): FullSynthesizeRequest {
       speakingRate: 1,
       pitch: 0,
       volumeGainDb: 0,
-      sampleRateHertz: 24000,
-      effectsProfileId: ["small-bluetooth-speaker-class-device"],
+      sampleRateHertz: 48000,
     },
   };
 }
