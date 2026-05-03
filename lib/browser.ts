@@ -18,9 +18,9 @@ const SYNTHESIZE_URL =
   "https://texttospeech.googleapis.com/v1beta1/text:synthesize";
 const PLAYWRIGHT_CLI_COMMAND = "playwright-cli";
 const PLAYWRIGHT_BROWSER = "chrome";
-const PROXY_TIMEOUT_MS = 120_000;
-const SYNTHESIS_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 30_000;
+const PROXY_TIMEOUT_MS = 300_000;
+const SYNTHESIS_ATTEMPTS = 6;
+const RETRY_DELAY_MS = 120_000;
 
 const textDecoder = new TextDecoder();
 
